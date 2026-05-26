@@ -1,0 +1,38 @@
+# place_into_padded { #imcombiners.place_into_padded }
+
+```python
+place_into_padded(images, offsets, *, fill=np.nan, validate=True)
+```
+
+Place N-D arrays into a padded stack using integer offsets.
+
+Offsets are in Python/NumPy axis order. For 2-D images, `(dy, dx)` means
+`(row offset, column offset)`: positive `dy` places an image at a larger
+row index, and positive `dx` places it at a larger column index. Raw
+offsets are normalized by subtracting the per-axis minimum offset, matching
+`astro-ndslice` outer-shape convention for offsets already in Python axis
+order.
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**images**]{.parameter-name} [:]{.parameter-annotation-sep} [sequence of array-like, each shape (*spatial)]{.parameter-annotation}</code>
+
+:   Input arrays. Arrays may have different shapes, but must all have the same number of dimensions. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`; integer images are promoted to a floating workspace. Other dtypes, including `int64` and `float128`, are not silently cast. Cast unsupported arrays explicitly before padding.
+
+<code>[**offsets**]{.parameter-name} [:]{.parameter-annotation-sep} [(array - like, shape(N, ndim))]{.parameter-annotation}</code>
+
+:   Integer offsets in NumPy axis order. `N` must match the number of arrays, and `ndim` must match each input array.
+
+<code>[**fill**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [np.nan]{.parameter-default}</code>
+
+:   Value assigned to uncovered pixels in the padded stack. The default is `NaN`, which makes the combine kernels ignore uncovered regions.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, validate image dimensionality, dtype, offset shape, and offset dtype. If `False`, callers must provide same-rank contiguous arrays with compatible dtypes and an integer offset array of shape `(N, ndim)`.
+
+## Returns {.doc-section .doc-section-returns}
+
+<code>[**padded**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *outer_shape))]{.parameter-annotation}</code>
+
+:   Stack containing all arrays placed into the common padded frame.

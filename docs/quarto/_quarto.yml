@@ -1,0 +1,119 @@
+project:
+  type: website
+  output-dir: _site
+
+metadata-files:
+  - api/_sidebar.yml
+
+website:
+  title: "imcombiners"
+  site-url: https://ysbach.github.io/imcombiners/
+  favicon: assets/logo.png
+  image: assets/logo.png
+  navbar:
+    logo: assets/logo.png
+    logo-alt: "imcombiners logo"
+    left:
+      - href: index.qmd
+        text: Home
+      - text: Tutorials
+        menu:
+          - href: tutorials/01-quickstart.qmd
+            text: "01 Quickstart Workflow"
+          - href: tutorials/02-usage-patterns.qmd
+            text: "02 Usage Patterns"
+          - href: tutorials/03-diagnostic-flags.qmd
+            text: "03 Diagnostic Flags"
+          - href: tutorials/04-zero-scale.qmd
+            text: "04 Zero Scale"
+          - href: tutorials/05-rejection-methods.qmd
+            text: "05 Rejection Methods"
+          - href: tutorials/06-offset-moving-object.qmd
+            text: "06 Offset Stacking"
+          - href: tutorials/07-iraf-compat.qmd
+            text: "07 IRAF Compatibility"
+      - href: performance.qmd
+        text: Performance
+      - href: benchmarks.qmd
+        text: Benchmarks
+      - href: api/index.qmd
+        text: API
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    code-fold: false
+    code-copy: true
+    css:
+      - styles.css
+
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+  freeze: auto
+
+quartodoc:
+  package: imcombiners
+  parser: numpy
+  dynamic: true
+  rewrite_all_pages: true
+  dir: api
+  sidebar: api/_sidebar.yml
+  sections:
+    - title: "1 Pipeline API"
+      desc: Stateful Combiner object and rejection objects.
+      contents:
+        - Combiner
+        - SigClip
+        - CcdClip
+        - LinearClip
+        - MinMaxClip
+        - PClip
+        - Rejector
+        - SampleFlags
+        - OutputFlags
+        - resolve_zero_scale
+    - title: "2 Kernel API"
+      desc: Advanced one-operation primitives for custom pipeline layers.
+      contents:
+        - kernels.mean
+        - kernels.median
+        - kernels.lmedian
+        - kernels.summation
+        - kernels.minimum
+        - kernels.maximum
+        - kernels.variance
+        - kernels.weighted_average
+        - kernels.grow_mask
+        - kernels.sigclip
+        - kernels.sigclip_mask
+        - kernels.sigclip_combine
+        - kernels.ccdclip
+        - kernels.ccdclip_mask
+        - kernels.ccdclip_combine
+        - kernels.linearclip
+        - kernels.minmax
+        - kernels.minmax_mask
+        - kernels.minmax_combine
+        - kernels.pclip
+        - kernels.pclip_mask
+        - kernels.pclip_combine
+    - title: "3 Compatibility API"
+      desc: IRAF-style compact wrapper.
+      contents:
+        - ndcombine
+        - place_into_padded
+    - title: "4 Parallel Controls"
+      desc: Runtime controls for Rayon worker count and serial/parallel cutoff.
+      contents:
+        - get_rayon_num_threads
+        - set_rayon_num_threads
+        - get_parallel_threshold
+        - set_parallel_threshold
+  renderer:
+    style: markdown
+    display_name: short
+    table_style: description-list

@@ -1,0 +1,217 @@
+---
+title: "02 Usage Patterns and Diagnostics"
+---
+
+This tutorial compares the four user-facing ways to run the same reduction:
+**Standard Combiner**, **Chained Combiner**, **compact ndcombine() wrapper**, and
+**direct kernel calls**. The goal here is call shape and diagnostics behavior.
+Zero/scale normalization and rejection algorithms are covered in later
+tutorials.
+
+## TL;DR
+
+| Usage | Best fit | Diagnostics behavior |
+|---|---|---|
+| Standard Combiner | Ordinary reductions and production pipelines | `diagnostics=None` is the fastest output-only route; `"simple"` / `"full"` are available when needed. |
+| Chained Combiner | Deep inspection, branching, and stage-local audits | Each `.threshold(...)`, `.zero_scale(...)`, `.reject(...)`, and `.combine(...)` mutates the `Combiner` and stores diagnostics after each stage. |
+| compact ndcombine() wrapper | IRAF-style compatibility and for CLI tools | `diagnostics="simple"` / `"full"` returns tuples |
+| direct kernel calls | Custom high-throughput layers | Caller owns mask application and downstream state |
+
+
+## 0. Shared Stack
+
+All examples use the same small stack and the same sigma-clipping settings.
+
+```{python}
+import numpy as np
+
+import imcombiners as imc
+import imcombiners.kernels as imck
+
+rng = np.random.default_rng(20250311)
+stack = rng.normal(1000.0, 10.0, (12, 6, 6)).astype("float32")
+stack[2, 3, 4] = 8000.0
+stack[7, 1, 2] = -2000.0
+
+input_mask = np.zeros_like(stack, dtype=bool)
+input_mask[:, 0, 0] = True
+
+sigclip = imc.SigClip(sigma=3.0, maxiters=5, ddof=0)
+```
+
+## 1. Standard `Combiner().combine()`
+
+The standard pattern is to build `cmb`, then call `cmb.combine(...)`. With
+`diagnostics=None`, supported rejection-plus-combine calls can use the fused
+output-only fast path.
+
+```{python}
+cmb = imc.Combiner(stack, mask=input_mask)
+out_default = cmb.combine("median", rejectors=sigclip, diagnostics=None)
+print(out_default.shape, out_default.dtype)
+```
+
+Use `diagnostics="simple"` when you want the final image plus shape-`(*spatial)` diagnostics retained on the combiner:
+
+```{python}
+cmb_diag = imc.Combiner(stack, mask=input_mask)
+out_diag = cmb_diag.combine("median", rejectors=sigclip, diagnostics="simple")
+# `out_diag` == `out_default`,
+# but `cmb_diag` now has attributes:
+#   `mask_rej`, `low`, `upp`, `nit`, `output_flags`.
+
+np.testing.assert_allclose(out_default, out_diag)
+print(
+    f"mask_rej: {cmb_diag.mask_rej.shape}, "
+    f"low/upp: {cmb_diag.low.shape}, nit dtype: {cmb_diag.nit.dtype}"
+)
+```
+
+Use `diagnostics="full"` when you also need a per-sample (shape `(N, *spatial)`), dtype-`uint8` `sample_flags` array:
+
+```{python}
+cmb_diag_full = imc.Combiner(stack, mask=input_mask)
+out_diag_full = cmb_diag_full.combine("median", rejectors=sigclip, diagnostics="full")
+# `out_diag_full` == `out_default`,
+#  but `cmb_diag_full` now has one more attribute: `sample_flags`.
+
+np.testing.assert_allclose(out_default, out_diag_full)
+print(f"sample_flags: {cmb_diag_full.sample_flags.shape}, dtype={cmb_diag_full.sample_flags.dtype}")
+```
+
+Standard Combiner diagnostics are retained on the object when requested. Use a fresh `Combiner` for each independent diagnostic call unless you intentionally want later operations to see the already-updated mask.
+
+## 2. Chained `Combiner()` Calls
+
+You do not need this for ordinary reductions. Standard `Combiner.combine()` can
+run the same reduction with better optimization. Chained Combiner is for **deep
+inspection and debugging**, so it intentionally keeps more state.
+
+This is the standard way:
+```{python}
+cmb_default_multi = imc.Combiner(stack, mask=input_mask)
+out_default_multi = cmb_default_multi.combine(
+    "median",
+    rejectors=[
+        imc.MinMaxClip(n_min=0, n_max=1),
+        sigclip,
+    ],
+    diagnostics=None,
+)
+```
+
+On the other hand, the chained approach is the explicit stateful form. It allows inspecting an intermediate mask, deciding whether the next rejector should run, comparing stage-local diagnostics, or branching from a partially processed combiner:
+
+```{python}
+cmb_chain = imc.Combiner(stack, mask=input_mask)
+
+cmb_chain.reject(imc.MinMaxClip(n_min=0, n_max=1), diagnostics="simple")
+mask_after_minmax = cmb_chain.mask.copy()
+print(f"after minmax: total masked = {cmb_chain.n_rejected}")
+print(f"saved intermediate mask: {mask_after_minmax.shape}")
+print(f"high outlier removed by minmax: {cmb_chain.mask_rej[2, 3, 4]}")
+print(f"low outlier removed by minmax: {cmb_chain.mask_rej[7, 1, 2]}")
+
+cmb_chain.reject(sigclip, diagnostics="full")
+print(f"after sigclip: total masked = {cmb_chain.n_rejected}")
+print(f"stages recorded: {len(cmb_chain.reject_history)}")
+print(f"high outlier flags in sigclip stage: {cmb_chain.sample_flags[2, 3, 4]}")
+print(f"low outlier flags in sigclip stage: {cmb_chain.sample_flags[7, 1, 2]}")
+
+out_chain = cmb_chain.combine("median")
+
+np.testing.assert_allclose(out_default_multi, out_chain, equal_nan=True)
+```
+
+The high outlier was removed by the first stage. In the second stage's `sample_flags`, it is therefore marked as `imc.SampleFlags.PREVIOUS`, while the low outlier removed by sigma clipping is marked as `imc.SampleFlags.ALGORITHM`. That kind of stage-local audit is the main reason to use chained calls.
+
+`sample_flags` can also record tentative sigma/CCD/linear clipping rejections that
+were restored by `nkeep` or `maxrej`. Those samples remain unmasked in
+`mask_rej`, but carry `imc.SampleFlags.RESTORED_NKEEP` or
+`imc.SampleFlags.RESTORED_MAXREJ` for auditing.
+
+```{python}
+print(f"PREVIOUS = {int(imc.SampleFlags.PREVIOUS)}")
+print(f"ALGORITHM = {int(imc.SampleFlags.ALGORITHM)}")
+```
+
+The tradeoff is speed and simplicity. Chained calls materialize diagnostics and mutate the combiner state at each step, so use the standard `Combiner().combine()` especially when you only need the final image.
+
+## 3. Compact `ndcombine()` Wrapper
+
+`ndcombine()` is for concise IRAF-style or CLI-friendly calls. It uses keyword settings instead of `Rejector` objects.
+
+```{python}
+out_nd = imc.ndcombine(
+    stack,
+    mask=input_mask,
+    combine="median",
+    reject="sigclip",
+    sigma=3.0,
+    maxiters=5,
+    ddof=0,
+)
+np.testing.assert_allclose(out_default, out_nd)
+```
+
+It supports the same diagnostic levels:
+
+```{python}
+nd_diagnos = imc.ndcombine(
+    stack,
+    mask=input_mask,
+    combine="median",
+    reject="sigclip",
+    sigma=3.0,
+    maxiters=5,
+    ddof=0,
+    diagnostics="simple",
+)
+print(f"compact wrapper simple tuple length: {len(nd_diagnos)}")
+
+nd_full = imc.ndcombine(
+    stack,
+    mask=input_mask,
+    combine="median",
+    reject="sigclip",
+    sigma=3.0,
+    maxiters=5,
+    ddof=0,
+    diagnostics="full",
+)
+print(f"compact wrapper full tuple length: {len(nd_full)}")
+```
+
+Use this wrapper when a single function call is clearer than constructing a `Combiner`, especially in compatibility layers. Use Standard Combiner when you want reusable rejector objects or a normal object-oriented Python workflow.
+
+## 4. Direct Kernel Calls
+
+Direct kernel calls are advanced primitives for those who want to spend manual work for truly maximal performance optimization. You directly access Rust kernels.
+
+```{python}
+(
+    mask_direct,
+    std_direct,
+    low_direct,
+    upp_direct,
+    nit_direct,
+    output_flags_direct,
+) = imck.sigclip(
+    stack,
+    mask=input_mask,
+    sigma=(3.0, 3.0),
+    maxiters=5,
+    ddof=0,
+)
+
+arr_eff = stack.copy()
+arr_eff[input_mask | mask_direct] = np.nan
+out_kernel = imck.median(arr_eff)
+
+np.testing.assert_allclose(out_default, out_kernel)
+print(f"direct kernel calls: mask={mask_direct.shape}, output_flags={output_flags_direct.dtype}")
+```
+
+Use direct kernel calls when profiling shows that wrapper overhead, validation,
+or object construction matters and the caller can manage array preparation and
+mask application explicitly.

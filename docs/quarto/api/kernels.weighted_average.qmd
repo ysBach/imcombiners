@@ -1,0 +1,27 @@
+# kernels.weighted_average { #imcombiners.kernels.weighted_average }
+
+```python
+kernels.weighted_average(arr, weights, *, validate=True)
+```
+
+Return the NaN-aware weighted average along the stack axis.
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *spatial))]{.parameter-annotation}</code>
+
+:   Image stack. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Integer inputs are promoted to the package's floating workspace when `validate` is `True`. Inputs with more than 3 dimensions are flattened internally; output shapes match the trailing spatial dimensions of the input.
+
+<code>[**weights**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N))]{.parameter-annotation}</code>
+
+:   Per-plane weights. The weighted sum skips non-finite pixels, so the effective denominator is the sum of weights for finite values at each output pixel.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, check dimensionality and normalize dtype/contiguity before entering the Rust kernel. If `False`, callers must provide inputs that satisfy the compiled kernel assumptions.
+
+## Returns {.doc-section .doc-section-returns}
+
+<code>[**weighted_average**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
+
+:   Per-pixel weighted average. Pixels with no finite weighted samples return `NaN`.

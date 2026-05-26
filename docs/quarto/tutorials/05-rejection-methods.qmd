@@ -1,0 +1,439 @@
+---
+title: "05 Rejection Methods"
+---
+
+`imcombiners` ships five rejection algorithms. This tutorial uses **Standard Combiner** for production examples, **Chained Combiner** only where diagnostics are inspected, and **direct kernel calls** at the end for performance-oriented equivalents.
+
+```{python}
+import numpy as np
+import time
+import imcombiners as imc
+import imcombiners.kernels as imck
+```
+
+## 1. Test Stack
+
+We build a controlled stack: Gaussian noise plus a handful of extreme outliers.
+
+```{python}
+rng = np.random.default_rng(20250311)
+n, ny, nx = 25, 8, 8
+true_val = 100.0
+sigma_noise = 5.0
+
+stack = rng.normal(true_val, sigma_noise, (n, ny, nx)).astype("float32")
+
+# Inject outliers at known locations
+stack[3, 2, 2] = 500.0      # bright cosmic ray
+stack[7, 5, 4] = 480.0      # another cosmic ray
+stack[14, 0, 6] = -200.0    # negative spike
+stack[0] += 40.0            # one systematically hot frame
+```
+
+For production reductions, pass a `Rejector` object to Standard Combiner:
+
+```{python}
+cmb_fast = imc.Combiner(stack)
+out_sc_fast = cmb_fast.combine(
+    "median",
+    rejectors=imc.SigClip(sigma=(3.0, 3.0), maxiters=5, cenfunc="median"),
+    diagnostics=None,
+)
+print(f"Production output shape: {out_sc_fast.shape}")
+```
+
+The short Chained Combiner snippets below exist only to inspect masks, clipping bounds, iteration counts, and status flags.
+
+## 2. Sigma Clipping
+
+Iteratively clips values more than `sigma` standard deviations from the per-pixel center estimate. Adapts to the local spread, so it works well even when the noise level varies slightly across frames.
+
+**Best for:** general-purpose rejection with near-Gaussian noise.
+
+```{python}
+c_sc = imc.Combiner(stack).reject(
+    imc.SigClip(sigma=(3.0, 3.0), maxiters=5, cenfunc="median")
+)
+out_sc = c_sc.combine("median")
+mask_sc, std_sc, low_sc, upp_sc, nit_sc, code_sc = c_sc.last_reject
+
+print(f"SigClip   - rejected {mask_sc.sum():4d} pixels, max iters used: {nit_sc.max()}")
+```
+
+`low_sc` and `upp_sc` are the lowest and highest retained finite sample values after clipping. Values equal to a bound are kept; only values below `low_sc` or above `upp_sc` are rejected. The internal clipping thresholds are still computed from `center +/- sigma * spread`.
+
+The `nit` array shows how many clipping passes were needed per output element:
+
+```{python}
+unique_iters, counts = np.unique(nit_sc, return_counts=True)
+for k, v in zip(unique_iters, counts):
+    print(f"  nit={k}: {v} pixels")
+```
+
+`nkeep=1` is the default for `SigClip`, `CcdClip`, and `LinearClip`. It is a safety guard:
+an iteration that would reject every finite sample in a per-output stack is
+reverted. Use `nkeep=0` only when an all-rejected output element is acceptable.
+`revert_on_nkeep=True` is the default and makes this a full-iteration rollback
+for each affected pixel. Input-masked and non-finite samples remain excluded.
+Set `revert_on_nkeep=False` only when strict clipping may leave fewer than
+`nkeep` usable samples.
+
+Iterative sigma, CCD, and linear clipping recompute the clipping center after
+each pass from the current survivors. `LinearClip(maxiters=1)` keeps the
+historical one-pass behavior.
+
+### Grow Mask
+
+`grow` expands the rejection mask after the clipping decision. It is useful
+when a cosmic ray or bad pixel should also remove nearby samples in the same
+input frame. The expansion is spatial only: axis 0 is the stack axis and is
+not grown across.
+
+The radius is exact Euclidean distance on the integer pixel grid. In 2-D,
+`grow=1` reaches the four direct neighbors, while `grow=np.sqrt(2)` also
+reaches the diagonal neighbors. `grow=None` is the default and skips this
+extra calculation.
+
+```{python}
+toy = np.ones((10, 5, 5), dtype="float32")
+toy[0, 2, 2] = 100.0
+
+c_grow = imc.Combiner(toy).reject(
+    imc.SigClip(sigma=3.0, maxiters=5, ddof=0, nkeep=0),
+    grow=1,
+)
+
+print(c_grow.mask_rej[0].astype(int))
+print(f"grow-added output flags: {np.count_nonzero(c_grow.output_flags & imc.OutputFlags.GROW)}")
+```
+
+`mask_rej` is the final mask used by later combine calls, including grown
+samples. The `low`, `upp`, `nit`, and `std` maps still describe the underlying
+clipping calculation. `imc.OutputFlags.GROW` (value `16`) marks output elements where grow added
+at least one rejected sample.
+
+The cost of `grow` depends mostly on how many samples were rejected and how
+large the growth footprint is. The following local timing example uses a
+`float32` stack and times a sigma-clipped median combine with and without
+growth. Treat the values as machine-local guidance, not a fixed benchmark.
+
+```{python}
+bench_rng = np.random.default_rng(20250311)
+bench = bench_rng.normal(1000.0, 20.0, (31, 256, 256)).astype("float32")
+bench[0, ::32, ::32] += 800.0
+bench[1, 16::32, 16::32] -= 600.0
+
+
+def bench_case(label, func, repeats=5):
+    func()  # warm-up
+    elapsed = []
+    last = None
+    for _ in range(repeats):
+        start = time.perf_counter()
+        last = func()
+        elapsed.append(time.perf_counter() - start)
+    return label, float(np.median(elapsed) * 1_000.0), last
+
+
+def median_only():
+    cmb = imc.Combiner(bench)
+    return cmb.combine("median"), None
+
+
+def sigclip_median(grow):
+    c = imc.Combiner(bench).reject(
+        imc.SigClip(sigma=3.0, maxiters=5, ddof=0, nkeep=0),
+        grow=grow,
+    )
+    return c.combine("median"), c.mask_rej
+
+
+timings = [
+    bench_case("median only", median_only),
+    bench_case("sigclip median, grow=None", lambda: sigclip_median(None)),
+    bench_case("sigclip median, grow=1", lambda: sigclip_median(1)),
+    bench_case("sigclip median, grow=sqrt(2)", lambda: sigclip_median(np.sqrt(2))),
+    bench_case("sigclip median, grow=2", lambda: sigclip_median(2)),
+]
+
+baseline_ms = timings[1][1]
+print("| case | rejected samples | median time | relative to no grow |")
+print("|---|---:|---:|---:|")
+for label, ms, (_, mask) in timings:
+    n_rej = "-" if mask is None else str(int(mask.sum()))
+    rel = "-" if label == "median only" else f"{ms / baseline_ms:.2f}x"
+    print(f"| {label} | {n_rej} | {ms:.2f} ms | {rel} |")
+
+assert timings[0][2][0].shape == bench.shape[1:]
+assert np.isfinite(timings[1][2][0]).all()
+assert timings[2][2][1].sum() >= timings[1][2][1].sum()
+```
+
+Exact timings vary with the operation, dtype, image count, image shape,
+rejection density, `grow` radius, CPU, and thread settings. Larger radii and
+dense rejection masks cost more because more neighboring samples must be
+marked. Use `grow` when neighboring samples should be removed with the
+rejected sample; too large a radius can discard useful data around real
+sources or dense artifacts.
+
+## 3. CCD Clipping
+
+Uses a CCD noise model instead of the empirical spread. The threshold varies pixel-by-pixel with the local count level.
+
+Pass raw DN values to `Combiner(...).reject(CcdClip(gain=...))`; `CcdClip` passes `gain` into the compiled rejection kernel, which evaluates rejection on gain-corrected per-pixel scratch values without first materializing a full gain-corrected stack.
+
+The noise-model standard deviation is
+
+$$
+\sigma_{\rm pix} = \sqrt{(1 + s)\,|\mathrm{cen} + z_{\rm ref}|\,k_{\rm ref} + r^2}
+$$
+
+where `s` is `snoise`, `z_ref` is `zero_ref`, `k_ref` is `scale_ref`, and `r` is `rdnoise` in electrons. The center estimate `cen` and rejection thresholds are computed in gain-corrected units, so this model operates in electrons rather than DN or ADU. The `zero_ref` and `scale_ref` terms represent the additive and multiplicative corrections from optional zero/scale normalization, letting the noise calculation follow those corrections. When `snoise=0`, `zero_ref=0`, and `scale_ref=1`, this reduces to the familiar shot-noise plus read-noise form.
+
+**Best for:** photon-noise-dominated data with known CCD parameters.
+
+```{python}
+c_cc = imc.Combiner(stack).reject(
+    imc.CcdClip(
+        sigma=(3.0, 3.0),
+        gain=1.0,
+        rdnoise=5.0,
+        maxiters=5,
+    )
+)
+out_cc = c_cc.combine("median")
+mask_cc, std_cc, low_cc, upp_cc, nit_cc, code_cc = c_cc.last_reject
+
+print(f"CcdClip   - rejected {mask_cc.sum():4d} pixels, max iters used: {nit_cc.max()}")
+```
+
+`low_cc` and `upp_cc` are the lowest and highest retained finite sample values after clipping. Values equal to a bound are kept. The internal thresholds are computed from the CCD noise model.
+
+A useful `scale_ref` case is a stack that has already been divided by a
+representative count level. In this example the pixel values are near `1.0`
+because they were normalized by a sky level of 1000 electrons. The Poisson
+noise in normalized units is therefore about `sqrt(1000) / 1000`, not
+`sqrt(1)`. Passing `scale_ref=1/1000` tells the noise model to use that smaller
+normalized variance, so a 12% outlier is rejected:
+
+```{python}
+normalized = np.ones((20, 1, 1), dtype="float32")
+normalized[0, 0, 0] = 1.12
+
+c_no_ref = imc.Combiner(normalized).reject(
+    imc.CcdClip(sigma=3.0, rdnoise=0.005, maxiters=5)
+)
+c_with_ref = imc.Combiner(normalized).reject(
+    imc.CcdClip(sigma=3.0, rdnoise=0.005, scale_ref=1 / 1000, maxiters=5)
+)
+
+print(f"Without scale_ref: {c_no_ref.mask_rej.sum()} pixels rejected")
+print(f"With    scale_ref: {c_with_ref.mask_rej.sum()} pixels rejected")
+```
+
+The default `scale_ref=1` and `zero_ref=0` are appropriate when your data have
+not been rescaled.
+
+## 4. MinMax Clipping
+
+Rejects the smallest and largest unmasked values at each output element.
+When `n_min` or `n_max` is greater than or equal to 1, it is interpreted as a
+frame count. When it is between 0 and 1, it is interpreted as a fraction of the
+original stack size and converted with IRAF-style truncation,
+`int(N * fraction + 0.001)`. Deterministic and single-pass: fastest of the
+four.
+
+**Best for:** fixed N where you know exactly how many frames to trim, or as a first pass to knock out the worst extremes before statistical clipping.
+
+```{python}
+c_mm = imc.Combiner(stack).reject(imc.MinMaxClip(n_min=1, n_max=1))
+out_mm = c_mm.combine("median")
+mask_mm, std_mm, low_mm, upp_mm, nit_mm, code_mm = c_mm.last_reject
+
+print(f"MinMaxClip - rejected {mask_mm.sum():4d} pixels")
+```
+
+`low_mm` and `upp_mm` are inclusive retained-value bounds. Values equal to a bound are kept.
+
+For a 25-frame stack, `n_max=0.08` rejects `int(25 * 0.08 + 0.001) == 2`
+maximum-side samples per output element:
+
+```{python}
+c_mm_frac = imc.Combiner(stack).reject(imc.MinMaxClip(n_min=0, n_max=0.08))
+print(f"Fractional MinMaxClip rejected {c_mm_frac.mask_rej.sum()} pixels")
+```
+
+## 5. Linear Clipping
+
+`LinearClip` keeps values inside a center-relative interval:
+
+```python
+low_scale * center - low <= value <= upp_scale * center + upp
+```
+
+The center is recomputed from finite, unmasked survivors in each per-output stack.
+The default `LinearClip()` has `low_scale=upp_scale=1` and `low=upp=0`, so it is a
+no-op. `LinearClip(maxiters=1)` is the historical single-pass behavior; set
+`maxiters > 1` when you want it to iterate like the other clipping rejectors.
+It becomes useful when a detector or calibrated product has a known linear
+envelope around the local stack center.
+
+```{python}
+c_lin = imc.Combiner(stack).reject(
+    imc.LinearClip(
+        low_scale=1.0,
+        low=25.0,
+        upp_scale=1.0,
+        upp=25.0,
+        maxiters=2,
+    )
+)
+out_lin = c_lin.combine("median")
+mask_lin, std_lin, low_lin, upp_lin, nit_lin, code_lin = c_lin.last_reject
+
+print(f"LinearClip - rejected {mask_lin.sum():4d} pixels")
+```
+
+`low_lin` and `upp_lin` are the final computed retained bounds. Unlike
+`SigClip` and `CcdClip`, this method does not estimate a standard deviation; it
+only applies the configured affine envelope around the chosen center. Use
+`cenfunc="mean"`, `"median"`, or `"lmedian"`/`"lmed"`, and use `nkeep`,
+`maxrej`, and `revert_on_nkeep` when the same rollback safeguards are needed.
+
+## 6. Percentile Clipping
+
+IRAF-style `pclip` is a single-pass rejection method. It sorts each stack
+per-output stack, converts the scalar `frac` value to a rank offset around the median,
+uses that ranked sample to estimate a spread, then applies the lower and upper
+`sigma` thresholds.
+
+**Best for:** IRAF compatibility or fast, single-pass clipping when a sorted
+rank offset is a good enough spread proxy for the stack.
+
+```{python}
+c_pc = imc.Combiner(stack).reject(
+    imc.PClip(frac=-0.5, sigma=(3.0, 3.0))
+)
+out_pc = c_pc.combine("median")
+mask_pc, std_pc, low_pc, upp_pc, nit_pc, code_pc = c_pc.last_reject
+
+print(f"PClip     - rejected {mask_pc.sum():4d} pixels")
+```
+
+`low_pc` and `upp_pc` are the lowest and highest retained finite sample values
+after pclip rejection. Values equal to a retained bound are kept.
+
+## 7. Compare Outputs
+
+Each Chained Combiner example already merged the rejection mask into its pipeline state, so the combine step used only finite, unmasked, unrejected values:
+
+```{python}
+cmb_raw = imc.Combiner(stack)
+out_raw = cmb_raw.combine("median")
+
+print(f"True value:        {true_val:.1f}")
+print(f"No rejection:      mean={out_raw.mean():.2f}, std={out_raw.std():.2f}")
+print(f"SigClip  (3):      mean={out_sc.mean():.2f}, std={out_sc.std():.2f}")
+print(f"CcdClip  (3):      mean={out_cc.mean():.2f}, std={out_cc.std():.2f}")
+print(f"LinearClip:        mean={out_lin.mean():.2f}, std={out_lin.std():.2f}")
+print(f"MinMaxClip (1,1):  mean={out_mm.mean():.2f}, std={out_mm.std():.2f}")
+print(f"PClip (-0.5):       mean={out_pc.mean():.2f}, std={out_pc.std():.2f}")
+```
+
+## 8. Chain Rejectors
+
+All rejection algorithms are frozen-dataclass `Rejector` subclasses. For production reductions, pass a list of rejectors to Standard Combiner:
+
+```{python}
+# Trim the extremes first, then sigma-clip the rest
+cmb_combo = imc.Combiner(stack)
+out_combo = cmb_combo.combine(
+    "median",
+    rejectors=[
+        imc.MinMaxClip(n_min=1, n_max=1),
+        imc.SigClip(sigma=3.0, maxiters=5),
+    ],
+    diagnostics=None,
+)
+print(f"MinMaxClip + SigClip: mean={out_combo.mean():.2f}")
+```
+
+Use Chained Combiner for the same sequence when you need intermediate masks and diagnostics retained on the combiner.
+
+## 9. Variance Maps
+
+Variance is computed from the final valid values, not from the rejection threshold model. In NumPy terms:
+
+```python
+arr_eff = np.where(mask | rejected, np.nan, stack)
+var = np.nanvar(arr_eff, axis=0, ddof=ddof)
+```
+
+With `Combiner`, the current mask already includes input masks and all rejections:
+
+```{python}
+var = c_sc.variance(ddof=1)
+err = np.sqrt(var)
+print(f"variance mean={np.nanmean(var):.2f}, error mean={np.nanmean(err):.2f}")
+```
+
+`imcombiners` returns variance only. Use `np.sqrt(var)` if you want an error or standard-deviation map.
+
+## 10. `lmedian`
+
+For completeness: `median` averages the two middle values for even N (standard), while `lmedian` takes the lower of the two (IRAF convention). The same `lmedian`/`lmed` names can be used as rejection centers through `cenfunc` and `clip_cen`; that affects threshold calculation, while `combine="lmedian"` affects the final stack reduction.
+
+Because `lmedian` selects one input sample rather than averaging two samples, pure integer lower-median calls preserve accepted integer dtype. This applies to direct kernel calls via `imck.lmedian(int_stack)` and to compact ndcombine() wrapper with `combine="lmedian"` or `combine="lmed"` when no mask, rejection, zero, scale, or weight is used. This is often useful for even-numbered `uint16` image stacks: standard median may need a `.5` value and therefore a floating output, while lower median can stay `uint16` and save storage. Masked, rejected, zero-scaled, and `Combiner` workflows use the normal floating workspace.
+
+```{python}
+even_stack = stack[:10]   # N=10 (even)
+
+cmb_even = imc.Combiner(even_stack)
+out_med = cmb_even.combine("median")
+out_lmed = imc.ndcombine(even_stack, combine="lmedian")
+
+diff = out_lmed - out_med
+print(f"lmedian - median: min={diff.min():.4f}, max={diff.max():.4f}")
+print("(lmedian <= median everywhere for even N)")
+```
+
+The combine string names and aliases are the same in `Combiner` and `ndcombine`:
+
+| Method | Also accepts |
+|--------|--------------|
+| `mean` | `average`, `avg` |
+| `median` | `med` |
+| `lmedian` | `lmed` |
+| `sum` | |
+| `min` | |
+| `max` | |
+| `variance` | `var` |
+| `weighted_average` | `wvg` |
+
+## 11. Performance Tips: direct kernel calls
+
+Direct kernel calls are intended for already-prepared arrays and custom high-throughput layers. They do not keep `Combiner` state, so you must apply rejection masks yourself:
+
+```{python}
+mask_direct, std_direct, low_direct, upp_direct, nit_direct, code_direct = imck.sigclip(
+    stack, sigma=(3.0, 3.0), maxiters=5, cenfunc="median"
+)
+
+arr_eff = stack.copy()
+arr_eff[mask_direct] = np.nan
+out_direct = imck.median(arr_eff)
+
+np.testing.assert_allclose(out_direct, out_sc)
+print("direct kernel calls match the Chained Combiner result.")
+```
+Standard Combiner should remain the default API unless profiling shows that wrapper overhead matters.
+
+## 12. Quick Reference
+
+| Algorithm | Deterministic? | Adapts to noise? | Needs parameters |
+|-----------|:-:|:-:|---|
+| `SigClip` | No | Yes (empirical sigma) | `sigma`, `maxiters`, `cenfunc` |
+| `CcdClip` | No | Yes (CCD model) | `sigma`, `gain`, `rdnoise` |
+| `LinearClip` | Yes | Recomputed center, no spread estimate | `low_scale`, `low`, `upp_scale`, `upp`, `maxiters`, `cenfunc` |
+| `MinMaxClip` | Yes | No | `n_min`, `n_max` |
+| `PClip` | Yes | Approximate spread from sorted rank | `frac`, `sigma`, `nkeep` |

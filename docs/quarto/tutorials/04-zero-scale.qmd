@@ -1,0 +1,194 @@
+---
+title: "04 Zero Scale"
+---
+
+This tutorial uses **Standard Combiner** to apply per-frame offsets and divisors before combining: `(arr - zero) / scale`. The `zero` and `scale` arguments accept three forms:
+
+| Form | Example | When to use |
+|------|---------|-------------|
+| Numeric array | `scale=illumination` | You have the values from a separate measurement |
+| String statistic | `scale="median"` | Auto-compute a per-frame statistic over all pixels |
+| Callable | `scale=lambda p: np.percentile(p, 10)` | Custom estimator (e.g. robust background) |
+
+By default, per-frame `zero` and `scale` values are rebased to the zeroth frame (`zero_to_0th=True`, `scale_to_0th=True`). This follows IRAF behavior. It makes only a small subtraction or division, so real pixel values change only slightly and Poisson-noise calculations remain well behaved.
+
+Advanced callers can inspect the resolved broadcast vector with
+`imc.resolve_zero_scale(...)`, but most workflows should pass `zero=` and
+`scale=` directly to Standard Combiner.
+
+```{python}
+import numpy as np
+import imcombiners as imc
+import imcombiners.kernels as imck
+```
+
+## 1. Synthetic Setup
+
+We simulate flat-field exposures taken under slightly different lamp brightnesses. Each frame is spatially uniform with 2% pixel-to-pixel variation, but the overall level differs between frames.
+
+```{python}
+rng = np.random.default_rng(20250311)
+n_frames, ny, nx = 10, 32, 32
+
+# Spatially non-uniform sensitivity pattern (same for all frames)
+spatial_pattern = rng.normal(1.0, 0.02, (ny, nx)).astype("float32")
+
+# Each frame has a different overall illumination level
+illumination = np.array(
+    [1000, 1200, 950, 1100, 1050, 1300, 1150, 900, 1080, 1120],
+    dtype="float32",
+)
+
+stack = np.stack([
+    spatial_pattern * ill + rng.normal(0, 5.0, (ny, nx)).astype("float32")
+    for ill in illumination
+])
+
+print("Per-frame means (dominated by illumination):")
+print(stack.mean(axis=(1, 2)).round(0))
+```
+
+Without normalization, frames with different illumination would be combined unequally and the result would be biased toward the brightest frames:
+
+```{python}
+cmb_raw = imc.Combiner(stack)
+out_raw = cmb_raw.combine("median")
+print(f"Raw median: mean={out_raw.mean():.1f}  (expect ~illumination.mean()={illumination.mean():.0f})")
+```
+
+The goal is to normalize each frame to unit illumination before combining.
+
+## 2. Numeric Values
+
+Use this when you have the per-frame levels from an independent measurement (e.g. a flux standard observed in the same exposure):
+
+```{python}
+cmb_num = imc.Combiner(stack)
+out_num = cmb_num.combine(
+    "median",
+    scale=illumination,
+    scale_to_0th=False,
+)
+print(f"Numeric scale: mean={out_num.mean():.4f}  (expect ~1.0)")
+```
+
+The examples in this section use `scale_to_0th=False` when they want absolute unit-normalized output. With the default `scale_to_0th=True`, the scale vector is divided by its first value before application, preserving the zeroth frame's intensity scale instead of forcing the combined image toward `1.0`. The same distinction applies to `zero_to_0th`: set it to `False` when `zero` is an absolute background that should be fully subtracted.
+
+## 3. String Statistics
+
+Pass one of `"mean"`, `"median"`, `"sum"`, `"min"`, or `"max"` as `zero=` or `scale=`, and Standard Combiner computes that statistic over each plane's pixels automatically. Sigma-clipped statistics are available as `"sigclip_mean"` / `"mean_sc"` and `"sigclip_median"` / `"median_sc"` / `"med_sc"`.
+
+The sigma-clipped aliases use `sigma=3`, `maxiters=5`, `cenfunc="median"`, `clip_cen=None`, and `ddof=0` by default. Tune them with `zero_sigclip_kwargs` or `scale_sigclip_kwargs`; `cenfunc` and `clip_cen` also accept lower median as `"lmedian"`/`"lmed"`.
+
+```{python}
+# Divide each frame by its per-plane median — robust to pixel outliers
+cmb_str = imc.Combiner(stack)
+out_str = cmb_str.combine(
+    "median",
+    scale="median",
+    scale_to_0th=False,
+)
+print(f"scale='median': mean={out_str.mean():.4f}  (expect ~1.0)")
+```
+
+```{python}
+cmb_sc = imc.Combiner(stack)
+out_sc = cmb_sc.combine(
+    "median",
+    scale="med_sc",
+    scale_to_0th=False,
+    scale_sigclip_kwargs={"sigma": (2.5, 4.0), "maxiters": 3},
+)
+print(f"scale='med_sc': mean={out_sc.mean():.4f}")
+```
+
+This is equivalent to computing the medians manually and passing them:
+
+```{python}
+per_plane_median = np.median(stack, axis=(1, 2))
+cmb_equiv = imc.Combiner(stack)
+out_equiv = cmb_equiv.combine(
+    "median",
+    scale=per_plane_median,
+    scale_to_0th=False,
+)
+np.testing.assert_allclose(out_str, out_equiv, rtol=1e-5)
+print("Equivalent to manual per-plane median.")
+```
+
+## 4. Callable Statistics
+
+For a custom estimator — anything that maps one input plane with shape `(*spatial)` to a scalar:
+
+```{python}
+# Robust level estimate: use the central 80th-percentile range midpoint
+def robust_level(plane):
+    lo, hi = np.percentile(plane, [10, 90])
+    return float(0.5 * (lo + hi))
+
+cmb_callable = imc.Combiner(stack)
+out_callable = cmb_callable.combine(
+    "median",
+    scale=robust_level,
+    scale_to_0th=False,
+)
+print(f"Callable scale: mean={out_callable.mean():.4f}  (expect ~1.0)")
+```
+
+## 5. Background Subtraction
+
+`zero` subtracts a per-frame offset *before* dividing by `scale`. A typical use is removing per-frame sky backgrounds from science frames.
+
+```{python}
+# Simulate science frames: source + sky background varying per frame
+sky = np.array([200, 210, 195, 205, 200, 215, 208, 192, 203, 207], dtype="float32")
+source = 500.0
+
+sci_stack = np.stack([
+    rng.normal(source, 15.0, (ny, nx)).astype("float32") + s
+    for s in sky
+])
+
+# Subtract the known per-frame sky, then combine
+cmb_zero = imc.Combiner(sci_stack)
+out_zero = cmb_zero.combine(
+    "mean",
+    zero=sky,
+    zero_to_0th=False,
+)
+print(f"After sky subtraction: mean={out_zero.mean():.1f}  (expect ~{source:.0f})")
+```
+
+## 6. Zero + Scale
+
+Apply sky subtraction and flux normalization together in one Standard Combiner call. The order is always `(arr - zero) / scale`:
+
+```{python}
+cmb_both = imc.Combiner(stack)
+out_both = cmb_both.combine(
+    "median",
+    zero="median",
+    scale="mean",
+    rejectors=imc.SigClip(sigma=3.0, maxiters=5),
+    diagnostics=None,
+)
+print(f"zero + scale + sigclip median: mean={out_both.mean():.4f}")
+```
+
+## 7. Practical Notes
+
+- In Standard Combiner, `zero` and `scale` are applied for that call without mutating `cmb.arr` when `diagnostics=None`.
+- `scale` must be non-zero everywhere — a zero value raises `ValueError`.
+- Use Chained Combiner (`cmb.zero_scale(...).reject(...).combine(...)`) when you want to inspect the normalized workspace before combining.
+
+## 8. Performance Tips: direct kernel calls
+
+For simple fixed normalization, direct kernel calls can reproduce the same result after you prepare the workspace yourself:
+
+```{python}
+manual = np.ascontiguousarray(stack / illumination[:, None, None], dtype=np.float32)
+out_low = imck.median(manual, validate=False)
+
+np.testing.assert_allclose(out_num, out_low, rtol=1e-5)
+print("direct kernel calls match the numeric-scale result.")
+```

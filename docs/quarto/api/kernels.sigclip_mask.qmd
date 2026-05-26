@@ -1,0 +1,21 @@
+# kernels.sigclip_mask { #imcombiners.kernels.sigclip_mask }
+
+```python
+kernels.sigclip_mask(
+    arr,
+    *,
+    mask=None,
+    sigma=(3.0, 3.0),
+    maxiters=5,
+    ddof=0,
+    nkeep=1,
+    maxrej=None,
+    cenfunc='median',
+    clip_cen=None,
+    revert_on_nkeep=True,
+    grow=None,
+    validate=True,
+)
+```
+
+Return only the sigma-clipping rejection mask.

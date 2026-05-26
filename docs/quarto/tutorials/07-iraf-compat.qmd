@@ -1,0 +1,253 @@
+---
+title: "07 IRAF Compatibility"
+---
+
+This tutorial translates IRAF-style combine settings into **Standard Combiner**. Use **compact ndcombine() wrapper** when a compact IRAF-like function call is useful, **Chained Combiner** when diagnostics are part of the task, and **direct kernel calls** only for custom performance-sensitive layers.
+
+```{python}
+import numpy as np
+import imcombiners as imc
+import imcombiners.kernels as imck
+```
+
+## 1. Standard Combiner
+
+```{python}
+rng = np.random.default_rng(20250311)
+stack = rng.normal(100, 10, (15, 32, 32)).astype("float32")
+
+cmb = imc.Combiner(stack)
+out = cmb.combine(
+    "median",
+    rejectors=imc.SigClip(
+        sigma=(3.0, 3.0),
+        maxiters=5,
+        cenfunc="median",
+        nkeep=1,
+        revert_on_nkeep=True,
+    ),
+    diagnostics=None,
+)
+print(out.shape, out.dtype)
+```
+
+The equivalent compact ndcombine() wrapper spelling keeps the IRAF-style shape:
+
+```{python}
+out_one = imc.ndcombine(
+    stack,
+    combine="median",
+    reject="sigclip",
+    sigma=(3.0, 3.0),
+    maxiters=5,
+    cenfunc="median",
+    nkeep=1,
+    revert_on_nkeep=True,
+)
+np.testing.assert_allclose(out, out_one)
+print("Standard Combiner and compact ndcombine() wrapper agree.")
+```
+
+`reject` accepts the same strings: `"sigclip"`, `"ccdclip"`, `"minmax"`, `"pclip"`.
+
+For dtype-sensitive integer stacks, pure `combine="lmedian"` or `combine="lmed"` preserves the input dtype when no mask, rejection, zero, scale, or weight is used. Once any of those workflow features are enabled, `ndcombine` uses the normal floating workspace.
+
+Accepted public input dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Other dtypes are not silently downgraded. If your data are `int64`, `uint64`, `float128`, or another unsupported dtype, cast them explicitly before calling `ndcombine`. There is no full-precision `int64` combine path because the package does not provide a `float128` workspace.
+
+## 2. Kwarg Map
+
+| IRAF `imcombine` parameter/value | `ndcombine(...)` bridge kwarg | `Combiner` equivalent |
+|---|---|---|
+| `lthreshold=lo`, `hthreshold=hi` | `thresholds=(lo, hi)` | `.threshold(lo, hi)` |
+| `zero=z`, `scale=s` | `zero=z, scale=s` | `.zero_scale(zero=z, scale=s)` |
+| `combine="average"` | `combine="mean"` or `"average"` | `.combine("mean")` |
+| `combine="median"` | `combine="median"` | `.combine("median")` |
+| `combine="sum"` | `combine="sum"` | `.combine("sum")` |
+| `reject="none"` | `reject=None` | omit `.reject(...)` |
+| `reject="sigclip"`, `lsigma=lo`, `hsigma=hi` | `reject="sigclip", sigma=(lo, hi)` | `.reject(SigClip(sigma=(lo, hi)))` |
+| `reject="avsigclip"` | `reject="sigclip", cenfunc="mean", clip_cen="mean"` | `.reject(SigClip(cenfunc="mean", clip_cen="mean"))` |
+| `reject="ccdclip"`, `rdnoise=r`, `gain=g`, `snoise=s` | `reject="ccdclip", rdnoise=r, gain=g, snoise=s` | `.reject(CcdClip(rdnoise=r, gain=g, snoise=s))` |
+| `nlow=lo`, `nhigh=hi` with `reject="minmax"` | `reject="minmax", n_minmax=(lo, hi)` | `.reject(MinMaxClip(n_min=lo, n_max=hi))` |
+| `pclip=p` with `reject="pclip"` | `reject="pclip", pclip=p` | `.reject(PClip(frac=p))` |
+| `nkeep=n` | `nkeep=n` | `SigClip(..., nkeep=n)` or `CcdClip(..., nkeep=n)` |
+| `mclip=yes` / `mclip=no` | `cenfunc="median"` / `cenfunc="mean"` | `SigClip(cenfunc=...)` or `CcdClip(cenfunc=...)`; `cenfunc="lmedian"`/`"lmed"` is also available when lower-median centering is wanted |
+| `niterate=n` | `maxiters=n` | `SigClip(maxiters=n)` or `CcdClip(maxiters=n)` |
+| `grow=r` | `grow=r` | `.reject(SigClip(...), grow=r)` or `SigClip(..., grow=r)` |
+| `weight=w`, `combine="average"` | `weight=w, combine="weighted_average"` | `.combine("weighted_average", weight=w)` |
+| `rejmasks`, `nrejmasks`, `expmasks`, `sigmas` diagnostic products | `diagnostics="simple"` | returns `(combined, mask_rej, mask_thresh, std, low, upp, nit, output_flags)`, not IRAF-format files |
+| `blank=value` | pass `mask=(data == value)` | `Combiner(data, mask=(data == value))` |
+| `offsets=...` | prepare an offset-padded stack first | see the offset stacking tutorial, then combine the padded stack |
+| `masktype`, `maskvalue` | prepare a boolean input mask first | pass that mask to `ndcombine(..., mask=mask)` or `Combiner(..., mask=mask)` |
+| `sigscale` | no exact equivalent | IRAF compatibility approximation, not a recommended statistical model |
+| `reject="crreject"`, `project` | no direct equivalent | handle upstream/downstream before `Combiner` |
+
+Thresholds are applied before zero/scale, rejection, and combination. Bounds
+are inclusive: values survive when `lo <= value <= hi`. With `diagnostics="simple"`,
+`mask_thresh` records values rejected by thresholding separately from
+`mask_rej`, which records values rejected by the rejection algorithm.
+
+`grow` expands `mask_rej` spatially within each input frame after the rejection
+algorithm runs. The radius is exact Euclidean distance on the integer pixel
+grid: `grow=1` reaches the four direct neighbors in 2-D, while
+`grow=sqrt(2)` also reaches diagonal neighbors. It does not grow across the
+stack axis and it does not expand the input mask or `mask_thresh`. With
+`diagnostics="simple"`, `output_flags` value `16` marks output elements where growth added at least
+one rejected sample.
+
+`blank` is usually not a missing feature in Python workflows: make a boolean
+mask with `data == blank` and pass it as `mask`. Likewise, IRAF mask files and
+`masktype`/`maskvalue` conventions should be converted to a normal boolean
+input mask before calling `imcombiners`. Offsets are intentionally handled
+outside the combiner; see the offset stacking tutorial for building a padded
+stack from shifted images before combining.
+
+`sigscale` is not implemented as a named mode because it is an imperfect
+mathematical approximation to how scale factors affect rejection thresholds.
+When a pipeline needs that behavior, express the intended noise or scale model
+directly with zero/scale normalization and, for CCD clipping, `scale_ref` and
+`zero_ref`.
+
+IRAF option names are shown to make translation from old `imcombine` scripts
+mechanical. The `ndcombine(...)` column is the compact ndcombine() wrapper
+compatibility bridge. The `Combiner` column shows Chained Combiner spelling
+because it maps each IRAF stage visibly; Standard Combiner can pass
+the same threshold and rejector specs directly to `combine(...)`.
+This is a porting guide, not a claim of bit-for-bit IRAF equivalence for every
+mode. IRAF recomputes the sigma/CCD clipping center during iterative rejection;
+this is the only behavior exposed by `imcombiners`. Use `revert_on_nkeep=True`
+for IRAF-like `nkeep` rollback when matching IRAF-style rejection matters.
+
+The default `nkeep=1` is intentionally conservative: iterative clipping will
+not reject every finite sample in a per-output stack. Setting `nkeep=0` removes
+that guard and can produce all-rejected output elements under aggressive clipping.
+With `revert_on_nkeep=True`, an iteration that would leave fewer than `nkeep`
+survivors is reverted in full for that pixel. Input-masked and non-finite
+samples remain excluded. Setting `revert_on_nkeep=False` makes clipping strict
+and may leave fewer than `nkeep` usable samples.
+
+One IRAF diagnostic shortcut is intentionally not reproduced in the default
+diagnostic path. For median sigma/CCD clipping with no growth, IRAF computes
+the final median from the retained sorted window but skips moving a low-side
+rejected window before writing `rejmasks`. Therefore a low-side rejection can
+appear in IRAF's rejection mask as the corresponding high sorted endpoint even
+though the final median used the low-side-clipped window. `imcombiners`
+prioritizes the kernel rejection mask for `diagnostics="simple"`; if exact IRAF diagnostic
+mask ordering is needed later, it should be an explicit compatibility mode
+implemented in Rust, not a hidden Python pass in the default API.
+
+By default, iterative sigma and CCD clipping recompute the clipping center
+after each pass from the current survivors. This matches the local IRAF
+`imcombine` source: `ic_msigclip*` recomputes `med` inside the rejection
+`repeat` loop, and `ic_asigclip*` recomputes `a = sum / n1` each iteration.
+
+Some IRAF shortcuts are exact work elimination rather than compatibility
+options. For example, when the rejection pass has already computed the same
+median or unweighted average that the final combine step needs, IRAF can reuse
+that value instead of running a separate combine calculation. That kind of
+optimization should not change the rejected mask or final image; it belongs in
+the implementation, not in user-facing knobs.
+
+`imcombiners` applies the same principle for exact hot-path reductions. Sigma
+clipping fuses the mean and standard-deviation pass when `clip_cen="mean"`,
+computes retained lower/upper extrema in one pass, and reuses the sorted
+retained-value boundaries in minmax rejection instead of scanning the per-output stack again.
+These are implementation details: they reduce duplicated work but do not
+change the mathematical result. IRAF-specific shortcuts that can change
+numerical behavior remain opt-in compatibility controls, such as
+`revert_on_nkeep=True`.
+
+For CCD images, common values are `thresholds=(0, satlevel)` to remove bad/cold
+pixels and saturated pixels, or `thresholds=(0, 0.99 * satlevel)` when
+near-saturated pixels should also be excluded.
+
+## 3. Exact IRAF Matching Recipe
+
+To reproduce supported IRAF-style output as closely as `imcombiners` can,
+translate the IRAF task parameters explicitly instead of relying on defaults:
+
+```{python}
+out = imc.ndcombine(
+    stack,
+    combine="median",          # "mean"/"average", "median", "lmedian", or "sum"
+    reject="sigclip",          # or "ccdclip", "minmax", "pclip", None
+    sigma=(3.0, 3.0),          # IRAF lsigma, hsigma
+    maxiters=5,                # IRAF niterate
+    cenfunc="median",          # IRAF mclip=yes; "mean" for mclip=no; "lmedian"/"lmed" for lower median
+    clip_cen=None,             # None means use cenfunc each iteration
+    nkeep=1,                   # IRAF nkeep
+    revert_on_nkeep=True,      # revert an iteration that would violate nkeep
+    zero_to_0th=True,          # IRAF re-bases zero offsets to the first image
+    scale_to_0th=True,         # IRAF re-bases scale factors to the first image
+)
+```
+
+For `combine="lmedian"` with an even number of integer input images, pure
+`ndcombine(stack, combine="lmedian")` can preserve the integer dtype by taking
+the lower of the two middle samples, matching IRAF's storage-friendly lower
+median behavior. Once masking, rejection, zero/scale, or weights are involved,
+`imcombiners` uses its normal floating workspace.
+
+IRAF has exact speed shortcuts in the rejection implementation, and `imcombiners`
+explicitly acknowledges that lineage. In the local IRAF source, median sigma
+clipping stores the median produced during rejection and sets
+`docombine=false` when the requested final combine is also median; average
+sigma clipping does the same for unweighted average combines. Those shortcuts
+are not user-visible mathematical options: they avoid a duplicate final
+reduction after the rejection mask is known.
+
+`imcombiners` applies the same IRAF-borrowed work-elimination principle where
+the implementation can preserve the final image exactly. In output-only
+`ndcombine(..., diagnostics=None)` calls with supported `mean`/`median` combines,
+the Rust kernels fuse rejection and final combine for `sigclip`, `ccdclip`,
+`minmax`, and `pclip`. That avoids materializing a full rejection-mask product,
+building a NaN-filled copy, and calling a second combine kernel. Diagnostic
+requests (`diagnostics="simple"`) and spatial growth (`grow=...`) intentionally keep the
+mask-producing path because those workflows need the intermediate products.
+
+Other speedups are Rust implementation details around the IRAF semantics:
+per-worker scratch buffers replace per-pixel heap allocation, rank buffers use
+deterministic total ordering for finite values, output masks are scattered
+through contiguous C-order slices, and `ccdclip` passes `gain` into Rust so
+rejection can use gain-corrected scratch values without materializing a full
+gain-corrected stack. Output-only `ccdclip` additionally combines the original
+source values in the same fused path. The borrowed idea is IRAF's exact work
+elimination; the memory-layout and allocation details are specific to this
+Rust/NumPy implementation.
+
+`pclip` follows IRAF's scalar parameter semantics. IRAF converts the task
+parameter into an integer rank offset from the sorted median, uses that sample's
+distance from the median as a sigma estimate, then applies `lsigma`/`hsigma`
+clipping. In `imcombiners`, pass this value as `pclip=` in the compact
+ndcombine() wrapper, `frac=` in `PClip`, or `frac=` in `imck.pclip`. Tuple `frac` values from the older
+percentile-window API are rejected.
+
+IRAF's `sigscale` behavior is different. When image scales differ beyond the
+configured tolerance, IRAF modifies the rejection sigma calculation using a
+scale-dependent correction. That is an IRAF compatibility approximation, not a
+mathematically exact replacement for modeling the data in normalized units.
+`imcombiners` therefore does not expose it as a recommended mode. For CCD
+clipping, prefer expressing the intended noise model directly with `scale_ref`
+and `zero_ref`.
+
+## 4. Performance Tips: direct kernel calls
+
+Direct kernel calls expose the same Rust rejection primitives without the
+Combiner wrapper. They are useful when a pipeline has
+already prepared contiguous floating workspaces:
+
+```{python}
+mask_low, *_ = imck.sigclip(
+    stack,
+    sigma=(3.0, 3.0),
+    maxiters=5,
+    cenfunc="median",
+    nkeep=1,
+    revert_on_nkeep=True,
+)
+arr_eff = stack.copy()
+arr_eff[mask_low] = np.nan
+out_low = imck.median(arr_eff)
+
+np.testing.assert_allclose(out, out_low)
+print("direct kernel calls reproduce the IRAF-style median.")
+```

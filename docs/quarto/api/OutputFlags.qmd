@@ -1,0 +1,20 @@
+# OutputFlags { #imcombiners.OutputFlags }
+
+```python
+OutputFlags()
+```
+
+Per-output rejection status flags.
+
+These bits apply to spatial-shaped `output_flags` arrays, not to the
+stack-shaped `sample_flags` diagnostic arrays.
+
+## Attributes
+
+| Name | Description |
+| --- | --- |
+| [GROW](#imcombiners.OutputFlags.GROW) | Per-output rejection status flags. |
+| [MAXITERS](#imcombiners.OutputFlags.MAXITERS) | Per-output rejection status flags. |
+| [MAXREJ](#imcombiners.OutputFlags.MAXREJ) | Per-output rejection status flags. |
+| [NKEEP](#imcombiners.OutputFlags.NKEEP) | Per-output rejection status flags. |
+| [PREMASKED](#imcombiners.OutputFlags.PREMASKED) | Per-output rejection status flags. |

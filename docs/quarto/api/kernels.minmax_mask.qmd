@@ -1,0 +1,15 @@
+# kernels.minmax_mask { #imcombiners.kernels.minmax_mask }
+
+```python
+kernels.minmax_mask(
+    arr,
+    *,
+    mask=None,
+    n_min=1,
+    n_max=1,
+    grow=None,
+    validate=True,
+)
+```
+
+Return only the minmax rejection mask.

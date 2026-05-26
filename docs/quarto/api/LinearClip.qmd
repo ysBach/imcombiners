@@ -1,0 +1,109 @@
+# LinearClip { #imcombiners.LinearClip }
+
+```python
+LinearClip(
+    low_scale=1.0,
+    low=0.0,
+    upp_scale=1.0,
+    upp=0.0,
+    maxiters=1,
+    cenfunc='median',
+    nkeep=1,
+    maxrej=None,
+    revert_on_nkeep=True,
+    grow=None,
+)
+```
+
+Center-relative linear clipping.
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**low_scale**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1.0]{.parameter-default}</code>
+
+:   Multiplier for the per-pixel center used in the lower retained bound.
+
+<code>[**low**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+
+:   Non-negative margin subtracted from ``low_scale * center``.
+
+<code>[**upp_scale**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1.0]{.parameter-default}</code>
+
+:   Multiplier for the per-pixel center used in the upper retained bound.
+
+<code>[**upp**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+
+:   Non-negative margin added to ``upp_scale * center``.
+
+<code>[**maxiters**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Maximum number of clipping iterations per pixel. `1` preserves the historical single-pass behavior.
+
+<code>[**cenfunc**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+
+:   Center estimator used each iteration. `lmedian` accepts the alias `lmed` and uses the lower of the two middle samples for even valid counts.
+
+<code>[**nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Minimum number of unmasked values to preserve at each pixel.
+
+<code>[**maxrej**]{.parameter-name} [:]{.parameter-annotation-sep} [int or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Maximum number of values that may be rejected at each pixel. `None` means no limit.
+
+<code>[**revert_on_nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, an iteration that would leave fewer than `nkeep` usable samples at a pixel is reverted in full for that pixel.
+
+<code>[**grow**]{.parameter-name} [:]{.parameter-annotation-sep} [float or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Optional radius in pixels used to grow `mask_rej` spatially after rejection. Axis 0 is the stack axis and is never grown across. `None` disables growth and skips the extra calculation.
+
+## Attributes
+
+| Name | Description |
+| --- | --- |
+| [cenfunc](#imcombiners.LinearClip.cenfunc) | str(object='') -> str |
+| [grow](#imcombiners.LinearClip.grow) | The type of the None singleton. |
+| [low](#imcombiners.LinearClip.low) | Convert a string or number to a floating-point number, if possible. |
+| [low_scale](#imcombiners.LinearClip.low_scale) | Convert a string or number to a floating-point number, if possible. |
+| [maxiters](#imcombiners.LinearClip.maxiters) | int([x]) -> integer |
+| [maxrej](#imcombiners.LinearClip.maxrej) | The type of the None singleton. |
+| [nkeep](#imcombiners.LinearClip.nkeep) | int([x]) -> integer |
+| [revert_on_nkeep](#imcombiners.LinearClip.revert_on_nkeep) | Returns True when the argument is true, False otherwise. |
+| [upp](#imcombiners.LinearClip.upp) | Convert a string or number to a floating-point number, if possible. |
+| [upp_scale](#imcombiners.LinearClip.upp_scale) | Convert a string or number to a floating-point number, if possible. |
+
+## Methods
+
+| Name | Description |
+| --- | --- |
+| [apply](#imcombiners.LinearClip.apply) | Apply LinearClip to an image stack. |
+
+### apply { #imcombiners.LinearClip.apply }
+
+```python
+LinearClip.apply(arr, mask=None, *, validate=True)
+```
+
+Apply LinearClip to an image stack.
+
+#### Parameters {.doc-section .doc-section-parameters}
+
+<code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *spatial))]{.parameter-annotation}</code>
+
+:   Image stack. Inputs with more than 3 dimensions are flattened internally; output shapes match the trailing spatial dimensions of the input.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Input mask; `True` means already masked. Must have the same shape as `arr` before any internal flattening.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, validate inputs before calling the kernel.
+
+#### Returns {.doc-section .doc-section-returns}
+
+<code>[]{.parameter-name} [:]{.parameter-annotation-sep} [mask_rej, std, low, upp, nit, output_flags : tuple of ndarray]{.parameter-annotation}</code>
+
+:   Rejection mask and diagnostics from this rejection algorithm. `std` is the per-pixel spread used by sigma/CCD clipping and `None` for rejection algorithms without a spread diagnostic.

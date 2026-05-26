@@ -1,0 +1,24 @@
+[package]
+name = "imcombiners"
+version = "0.1.0"
+edition = "2021"
+description = "Rust-backed image stack combine + rejection kernels (IRAF imcombine parity)"
+license = "MIT"
+
+[lib]
+name = "_core"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["abi3-py310"] }
+numpy = "0.28"
+ndarray = { version = "0.16", features = ["rayon"] }
+rayon = "1.10"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

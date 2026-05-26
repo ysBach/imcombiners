@@ -1,0 +1,11 @@
+# get_rayon_num_threads { #imcombiners.get_rayon_num_threads }
+
+```python
+get_rayon_num_threads()
+```
+
+Return the size of Rayon global worker pool.
+
+Calling this may initialize Rayon. Set the thread count with
+`RAYON_NUM_THREADS` before starting Python, or call
+`set_rayon_num_threads()` before any combine/rejection kernel.

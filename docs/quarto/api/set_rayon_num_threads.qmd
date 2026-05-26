@@ -1,0 +1,13 @@
+# set_rayon_num_threads { #imcombiners.set_rayon_num_threads }
+
+```python
+set_rayon_num_threads(num_threads)
+```
+
+Set the Rayon global worker-pool size.
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**num_threads**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation}</code>
+
+:   Positive number of Rayon worker threads. This must be called before any Rayon use in the current Python process. If Rayon has already been initialized, a `RuntimeError` is raised.

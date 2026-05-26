@@ -1,0 +1,322 @@
+# Combiner { #imcombiners.Combiner }
+
+```python
+Combiner(arr, mask=None, *, copy=True, validate=True)
+```
+
+Stateful pipeline holder for `(scale/zero, reject, combine)` workflows.
+
+Use Standard Combiner with ``rejectors=...`` and
+``diagnostics=None`` for production reductions. Use Chained Combiner calls
+when you need retained masks, rejection diagnostics, or step-by-step
+inspection.
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *spatial))]{.parameter-annotation}</code>
+
+:   Image stack. Accepted public input dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. `uint8`, `uint16`, and `int16` are promoted to `float32`; `int32` is promoted to `float64`; `float32` and `float64` are preserved. Other dtypes, including `int64` and `float128`, are not silently cast. ``Combiner`` is intended for workflows that may apply masking, rejection, zero, or scale. Inputs with more than 3 dimensions are flattened to ``(N, prod(spatial), 1)`` for internal processing; all outputs (from :meth:`combine` and :attr:`last_reject`) are reshaped back to the original trailing dimensions.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Input mask with the same shape as `arr`; ``True`` = masked. ``None`` means no mask.
+
+<code>[**copy**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, copy `arr` and `mask` into owned workspace arrays. If `False`, keep references to normalized inputs when possible.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, validate shape, dtype, mask compatibility, and contiguity. If `False`, callers must provide a 3-D contiguous stack with a dtype accepted by the compiled kernels and a same-shape boolean mask.
+
+## Attributes {.doc-section .doc-section-attributes}
+
+<code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray]{.parameter-annotation}</code>
+
+:   Working stack (after any ``zero_scale``), always 3-D internally. Owned, may be modified.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool or None]{.parameter-annotation}</code>
+
+:   Combined mask (union of input, threshold, and rejection masks), 3-D. ``None`` until one is set.
+
+<code>[**mask_thresh**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool or None]{.parameter-annotation}</code>
+
+:   Threshold mask from :meth:`threshold`, shaped like the original input stack. ``None`` until thresholding has been applied.
+
+<code>[**last_reject**]{.parameter-name} [:]{.parameter-annotation-sep} [tuple or None]{.parameter-annotation}</code>
+
+:   ``(mask_rej, std, low, upp, nit, output_flags)`` from the most recent :meth:`reject` call, shaped to match the original trailing spatial dimensions. If `grow` was used, `mask_rej` is the grown rejection mask; `low`, `upp`, `nit`, and `std` still describe the underlying clipping calculation, and `output_flags` bit ``16`` marks output elements where growth added at least one rejected sample. ``None`` until :meth:`reject` has been called.
+
+<code>[**last_sample_flags**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of uint8 or None]{.parameter-annotation}</code>
+
+:   Stack-shaped per-sample flags from the most recent :meth:`reject` call made with ``diagnostics="full"``. This is stage-local like :attr:`last_reject`; samples already masked before the rejection step are marked with sample bit ``32`` rather than replaying earlier-stage causes. Iterative sigma/CCD/linear clipping can also mark samples tentatively rejected and then restored by `nkeep` or `maxrej`.
+
+## Methods
+
+| Name | Description |
+| --- | --- |
+| [combine](#imcombiners.Combiner.combine) | Combine the (possibly masked) stack along axis 0 and return the result. |
+| [copy](#imcombiners.Combiner.copy) | Return an independent copy of this pipeline state. |
+| [reject](#imcombiners.Combiner.reject) | Apply a rejector, OR-merging its mask into ``self.mask``. |
+| [threshold](#imcombiners.Combiner.threshold) | Mask values outside inclusive threshold bounds. |
+| [variance](#imcombiners.Combiner.variance) | Return variance of final valid values along axis 0. |
+| [zero_scale](#imcombiners.Combiner.zero_scale) | Apply per-image offset / scale: ``(arr - zero) / scale``. |
+
+### combine { #imcombiners.Combiner.combine }
+
+```python
+Combiner.combine(
+    method='mean',
+    *,
+    weight=None,
+    ddof=0,
+    zero=None,
+    scale=None,
+    zero_to_0th=True,
+    scale_to_0th=True,
+    zero_sigclip_kwargs=None,
+    scale_sigclip_kwargs=None,
+    thresholds=None,
+    rejectors=None,
+    full=False,
+    diagnostics=None,
+)
+```
+
+Combine the (possibly masked) stack along axis 0 and return the result.
+
+Masked pixels are NaN-filled before combining so the kernels skip them.
+Passing combine-call ``thresholds`` or ``rejectors`` with
+``diagnostics=None`` is the Standard Combiner style; supported
+single-rejector mean/median calls can use fused kernels without
+storing rejection diagnostics. Calling :meth:`threshold`,
+:meth:`zero_scale`, and :meth:`reject` before :meth:`combine` is the
+Chained Combiner style; it preserves masks and rejection diagnostics for
+inspection.
+Since ``Combiner`` works on its normalized workspace, ``lmedian`` here
+follows that workspace dtype. Integer-preserving pure lower median is
+available through :func:`imcombiners.kernels.lmedian` or pure
+:func:`imcombiners.ndcombine` calls.
+
+#### Parameters {.doc-section .doc-section-parameters}
+
+<code>[**method**]{.parameter-name} [:]{.parameter-annotation-sep} [str]{.parameter-annotation} [ = ]{.parameter-default-sep} [\'mean\']{.parameter-default}</code>
+
+:   Combine method. Supported aliases are `"mean"`, `"average"`, `"avg"`, `"median"`, `"med"`, `"lmedian"`, `"lmed"`, `"sum"`, `"min"`, `"max"`, `"variance"`, `"var"`, `"weighted_average"` and `"wvg"`.
+
+<code>[**weight**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of shape (N,)]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Required for ``method="weighted_average"``.
+
+<code>[**ddof**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [0]{.parameter-default}</code>
+
+:   Delta degrees of freedom for ``method="variance"``. Ignored by other combine methods.
+
+<code>[**zero**]{.parameter-name} [:]{.parameter-annotation-sep} [array-like, str, callable, or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Per-plane values to subtract before scaling, after any thresholds passed to this ``combine`` call and before combine-call rejection. Accepts the same forms as :meth:`zero_scale`.
+
+<code>[**scale**]{.parameter-name} [:]{.parameter-annotation-sep} [array-like, str, callable, or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Per-plane values used as divisors after zero subtraction. Accepts the same forms as :meth:`zero_scale`.
+
+<code>[**zero_to_0th**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   Whether per-plane zero or scale values are rebased to the zeroth frame before application, matching :meth:`zero_scale` defaults.
+
+<code>[**scale_to_0th**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   Whether per-plane zero or scale values are rebased to the zeroth frame before application, matching :meth:`zero_scale` defaults.
+
+<code>[**zero_sigclip_kwargs**]{.parameter-name} [:]{.parameter-annotation-sep} [dict or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Keyword arguments used only when `zero` or `scale` is a sigma-clipped statistic alias.
+
+<code>[**scale_sigclip_kwargs**]{.parameter-name} [:]{.parameter-annotation-sep} [dict or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Keyword arguments used only when `zero` or `scale` is a sigma-clipped statistic alias.
+
+<code>[**thresholds**]{.parameter-name} [:]{.parameter-annotation-sep} [tuple or sequence of tuple]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Inclusive threshold bounds to apply before any rejectors passed to this ``combine`` call. Passing these to ``combine`` does not mutate the combiner unless a diagnostics level is requested. Combine-call zero/scale follows these thresholds.
+
+<code>[**rejectors**]{.parameter-name} [:]{.parameter-annotation-sep} [Rejector or sequence of Rejector]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Rejection steps to apply as part of this ``combine`` call. With ``diagnostics=None``, a single supported rejector may use a fused output-only kernel and no rejection diagnostics are stored.
+
+<code>[**full**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [False]{.parameter-default}</code>
+
+:   Legacy alias for ``diagnostics="simple"``.
+
+<code>[**diagnostics**]{.parameter-name} [:]{.parameter-annotation-sep} [(None, \'simple\', \'full\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Diagnostic level for this ``combine`` call. `None` returns only the combined image without mutating state. `"simple"` applies thresholds/rejectors to this combiner and retains `last_reject`. `"full"` also records `sample_flags` for the most recent rejection step.
+
+#### Returns {.doc-section .doc-section-returns}
+
+<code>[**combined**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
+
+:   Combined image, shaped to match the trailing spatial dimensions of the array passed to :meth:`__init__`.
+
+### copy { #imcombiners.Combiner.copy }
+
+```python
+Combiner.copy()
+```
+
+Return an independent copy of this pipeline state.
+
+#### Returns {.doc-section .doc-section-returns}
+
+<code>[**combiner**]{.parameter-name} [:]{.parameter-annotation-sep} [Combiner]{.parameter-annotation}</code>
+
+:   New combiner with copied `arr` and `mask`. `last_reject` is shared by reference because it is diagnostic data from a completed step.
+
+### reject { #imcombiners.Combiner.reject }
+
+```python
+Combiner.reject(rejector, *, grow=None, diagnostics='simple')
+```
+
+Apply a rejector, OR-merging its mask into ``self.mask``.
+
+``rejector`` is any :class:`~imcombiners._rejectors.Rejector` subclass
+(``SigClip``, ``CcdClip``, ``LinearClip``, ``MinMaxClip``, ``PClip``).
+If `grow` is not `None`, the rejection mask is grown spatially within
+each input plane before it is merged into the running mask.
+After a rejection step, ``self.mask_rej.sum(axis=0)`` is the number
+rejected by that step at each output element, including any grown
+samples. The number actually used by later combine calls is
+``np.sum(np.isfinite(self.arr) & ~self.mask, axis=0)`` after all input
+and rejection masks have been merged.
+
+#### Parameters {.doc-section .doc-section-parameters}
+
+<code>[**rejector**]{.parameter-name} [:]{.parameter-annotation-sep} [Rejector]{.parameter-annotation}</code>
+
+:   Rejection object to apply.
+
+<code>[**grow**]{.parameter-name} [:]{.parameter-annotation-sep} [float or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Non-negative radius in pixels used to grow this rejection mask over the original spatial axes. Axis 0 is the stack axis and is never grown across. `None` disables mask growth and avoids the extra calculation.
+
+<code>[**diagnostics**]{.parameter-name} [:]{.parameter-annotation-sep} [(None, \'simple\', \'full\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Rejection diagnostic level. `None` and `"simple"` keep the current `last_reject` products. `"full"` also records stack-shaped `sample_flags` for this rejection step.
+
+#### Returns {.doc-section .doc-section-returns}
+
+<code>[**combiner**]{.parameter-name} [:]{.parameter-annotation-sep} [Combiner]{.parameter-annotation}</code>
+
+:   This object, after updating `mask` and `last_reject`.
+
+### threshold { #imcombiners.Combiner.threshold }
+
+```python
+Combiner.threshold(low=-np.inf, upp=np.inf)
+```
+
+Mask values outside inclusive threshold bounds.
+
+Thresholding is a pre-rejection mask stage. Values survive when
+``low <= value <= upp``; values below `low` or above `upp` are recorded
+in :attr:`mask_thresh` and OR-merged into the running mask. Later
+``zero_scale`` statistics, rejection, and combination ignore these
+thresholded pixels.
+
+A common CCD-image pattern is ``low=0`` to remove bad/cold pixels and
+``upp=satlevel`` or ``upp=0.99 * satlevel`` to remove saturated or
+near-saturated pixels before they influence normalization or rejection.
+
+#### Parameters {.doc-section .doc-section-parameters}
+
+<code>[**low**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [-np.inf]{.parameter-default}</code>
+
+:   Inclusive lower and upper retained-value bounds.
+
+<code>[**upp**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [-np.inf]{.parameter-default}</code>
+
+:   Inclusive lower and upper retained-value bounds.
+
+#### Returns {.doc-section .doc-section-returns}
+
+<code>[**combiner**]{.parameter-name} [:]{.parameter-annotation-sep} [Combiner]{.parameter-annotation}</code>
+
+:   This object, after updating `mask` and `mask_thresh`.
+
+### variance { #imcombiners.Combiner.variance }
+
+```python
+Combiner.variance(ddof=1)
+```
+
+Return variance of final valid values along axis 0.
+
+Valid values are finite inputs not masked by the input mask and not
+rejected by previous :meth:`reject` calls. This is equivalent to::
+
+    arr_eff = np.where(mask | rejected, np.nan, stack)
+    var = np.nanvar(arr_eff, axis=0, ddof=ddof)
+
+#### Parameters {.doc-section .doc-section-parameters}
+
+<code>[**ddof**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Delta degrees of freedom. Pixels with ``nvalid <= ddof`` return `NaN`. Default is ``1``, i.e., Sample variance. Use ``ddof=0`` for population variance.
+
+#### Returns {.doc-section .doc-section-returns}
+
+<code>[**variance**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
+
+:   Per-pixel variance. Use ``np.sqrt(var)`` if an error or standard-deviation map is needed.
+
+### zero_scale { #imcombiners.Combiner.zero_scale }
+
+```python
+Combiner.zero_scale(
+    zero=None,
+    scale=None,
+    *,
+    zero_to_0th=True,
+    scale_to_0th=True,
+    zero_sigclip_kwargs=None,
+    scale_sigclip_kwargs=None,
+)
+```
+
+Apply per-image offset / scale: ``(arr - zero) / scale``.
+
+Either or both may be `None`. Modifies `self.arr` in place and returns
+`self` for chaining.
+
+#### Parameters {.doc-section .doc-section-parameters}
+
+<code>[**zero**]{.parameter-name} [:]{.parameter-annotation-sep} [array-like, str, callable, or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Per-plane values to subtract before scaling. Array-like inputs must be scalar or length `N`. Strings select a per-plane statistic: plain (`"mean"`, `"median"`, `"sum"`, `"min"`, `"max"` plus aliases) or sigma-clipped (`"sigclip_mean"` / `"mean_sc"` and `"sigclip_median"` / `"median_sc"` / `"med_sc"`, using ``sigma=3``, ``maxiters=5`` by default). Callables are evaluated once per image plane and must return a scalar. Current masks, including threshold masks, are applied before string statistics are computed.
+
+<code>[**scale**]{.parameter-name} [:]{.parameter-annotation-sep} [array-like, str, callable, or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Per-plane values used as divisors after zero subtraction. The same string and callable rules as `zero` apply, including the sigma-clipped variants. Scale values must be finite and non-zero when validation is enabled.
+
+<code>[**zero_to_0th**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, subtract the first zero value from all zero values before applying them. `True` is the default behavior to follow IRAF. Setting this to `True` makes only a small subtraction happen, so real pixel values change only slightly and Poisson-noise calculations remain well behaved.
+
+<code>[**scale_to_0th**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, divide all scale values by the first scale value before applying them. `True` is the default behavior to follow IRAF. Setting this to `True` makes only a small division happen, so real pixel values change only slightly and Poisson-noise calculations remain well behaved.
+
+<code>[**zero_sigclip_kwargs**]{.parameter-name} [:]{.parameter-annotation-sep} [dict or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Keyword arguments used only when `zero` or `scale` is a sigma-clipped statistic alias such as `"mean_sc"` or `"med_sc"`. Supported keys are `sigma`, `maxiters`, `cenfunc`, `clip_cen`, and `ddof`.
+
+<code>[**scale_sigclip_kwargs**]{.parameter-name} [:]{.parameter-annotation-sep} [dict or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Keyword arguments used only when `zero` or `scale` is a sigma-clipped statistic alias such as `"mean_sc"` or `"med_sc"`. Supported keys are `sigma`, `maxiters`, `cenfunc`, `clip_cen`, and `ddof`.
+
+#### Returns {.doc-section .doc-section-returns}
+
+<code>[**combiner**]{.parameter-name} [:]{.parameter-annotation-sep} [Combiner]{.parameter-annotation}</code>
+
+:   This object, after updating its working stack.

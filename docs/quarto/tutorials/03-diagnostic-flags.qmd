@@ -1,0 +1,291 @@
+---
+title: "03 Diagnostic Masks and Flags"
+---
+
+This note explains how to read rejection **diagnostics**. These diagnostics are
+useful when choosing and auditing rejection schemes for your data.
+
+The examples below use Chained `Combiner` because each step leaves inspectable
+state on the object. Standard `Combiner().combine()` and the compact
+`ndcombine()` wrapper can return the same final diagnostic products, but they
+are less convenient for inspecting intermediate stages.
+
+```{python}
+import numpy as np
+
+import imcombiners as imc
+```
+
+## 1. Two Kinds Of Flags
+
+1. `(N, *spatial)`-shaped flags and masks:
+  * `mask_rej` (dtype `bool`) : `True` if the pixel is rejected for any reason.
+  * `sample_flags` (dtype `uint8`): An integer bitmask that encodes the reason(s) why a pixel is unavailable.
+2. `(*spatial)`-shaped output flags:
+  * `output_flags` (dtype `uint8`): An integer bitmask that encodes how the output pixel is affected.
+
+The two flag arrays use separate bit namespaces. Use `imc.SampleFlags` constants with `sample_flags`, and use `imc.OutputFlags` constants with `output_flags` / `Combiner.output_flags`.
+
+## 2. `mask_rej`: Inspect The Rejection Mask
+
+Start with a compact example that rejects the highest sample at each output element. One output element has an obvious outlier, which makes the stack-shaped `mask_rej` easy to inspect:
+
+```{python}
+arr = np.array(
+    [
+        [[10.0, 10.0], [10.0, 10.0]],
+        [[11.0, 10.0], [10.0, 10.0]],
+        [[12.0, 99.0], [10.0, 10.0]],
+        [[13.0, 10.0], [10.0, 10.0]],
+        [[14.0, 10.0], [10.0, 10.0]],
+    ],
+    dtype="float32",
+)
+
+cmb = imc.Combiner(arr)
+cmb.reject(imc.MinMaxClip(n_min=0, n_max=1), diagnostics="simple")
+out = cmb.combine("mean")
+mask_rej = cmb.mask_rej
+
+print(mask_rej.astype(int)[:, 0, 1])
+print(f"Rejected count map:\n{mask_rej.sum(axis=0)}")
+```
+
+`mask_rej.sum(axis=0)` is the number of samples marked by the latest returned
+rejection/exclusion mask at each output element. It is often the first
+diagnostic image to plot.
+
+To count the samples that actually contributed to the final image, combine all
+availability rules: finite input, input mask, threshold mask, and rejection
+mask.
+
+```{python}
+available = np.isfinite(cmb.arr) & ~cmb.mask
+
+n_used = available.sum(axis=0)
+print(f"Used count map:\n{n_used}")
+```
+
+## 3. `sample_flags`: Why Each Sample Was Unavailable
+
+Ask for `diagnostics="full"` when you need per-sample reasons. In Chained
+`Combiner`, `sample_flags` is stage-local: masks from earlier steps are reported
+as `imc.SampleFlags.PREVIOUS`.
+
+```{python}
+arr1 = np.array([np.nan, 1.0, -5.0, 2.0, 100.0], dtype="float32").reshape(5, 1, 1)
+input_mask = np.zeros_like(arr1, dtype=bool)
+input_mask[1, 0, 0] = True
+
+cmb_sample = imc.Combiner(arr1, mask=input_mask)
+cmb_sample.threshold(0.0, np.inf)
+cmb_sample.reject(imc.MinMaxClip(n_min=0, n_max=3), diagnostics="full")
+out = cmb_sample.combine("mean")
+
+sample_flags = cmb_sample.sample_flags
+output_flags = cmb_sample.output_flags
+print(sample_flags[:, 0, 0].tolist())
+```
+
+The `sample_flags` flag meanings are:
+
+| Flag | Value | Meaning |
+|---|---:|---|
+| `imc.SampleFlags.INPUT_MASK` | `1` | Input mask or BPM masked this sample |
+| `imc.SampleFlags.NONFINITE` | `2` | Input sample is non-finite (`NaN`, `inf`) |
+| `imc.SampleFlags.THRESHOLD` | `4` | Threshold mask removed this sample |
+| `imc.SampleFlags.ALGORITHM` | `8` | Rejection algorithm rejected this sample |
+| `imc.SampleFlags.GROW` | `16` | Spatial `grow` added this sample after algorithm rejection |
+| `imc.SampleFlags.PREVIOUS` | `32` | Sample was already masked by a previous Chained Combiner stage |
+| `imc.SampleFlags.RESTORED_NKEEP` | `64` | Iterative clipping would have rejected this sample, but `nkeep` restored it |
+| `imc.SampleFlags.RESTORED_MAXREJ` | `128` | Iterative clipping would have rejected this sample, but `maxrej` restored it |
+
+Decode helper:
+
+```{python}
+SAMPLE_BITS = {
+    imc.SampleFlags.INPUT_MASK: "input mask/BPM",
+    imc.SampleFlags.NONFINITE: "non-finite",
+    imc.SampleFlags.THRESHOLD: "threshold",
+    imc.SampleFlags.ALGORITHM: "algorithm",
+    imc.SampleFlags.GROW: "grow",
+    imc.SampleFlags.PREVIOUS: "previous stage",
+    imc.SampleFlags.RESTORED_NKEEP: "restored by nkeep",
+    imc.SampleFlags.RESTORED_MAXREJ: "restored by maxrej",
+}
+
+
+def decode_sample_flags(value):
+    return [label for bit, label in SAMPLE_BITS.items() if value & bit] or ["used"]
+
+
+for i, value in enumerate(sample_flags[:, 0, 0]):
+    print(f"sample {i}: {int(value):2d} -> {', '.join(decode_sample_flags(int(value)))}")
+```
+
+In this example:
+
+- `NaN` gets `imc.SampleFlags.NONFINITE`.
+- The explicit input mask was already unavailable before this rejection step, so it gets `imc.SampleFlags.PREVIOUS`.
+- The thresholded negative value was also already unavailable before this rejection step, so it gets `imc.SampleFlags.PREVIOUS`.
+- The high value rejected by `MinMaxClip` gets `imc.SampleFlags.ALGORITHM`.
+- The retained sample has flags `0`.
+
+If you need the samples whose unavailability was caused by the current
+rejection algorithm or by spatial growth, select those causes explicitly:
+
+```{python}
+algorithm_or_grow = (
+    sample_flags & (imc.SampleFlags.ALGORITHM | imc.SampleFlags.GROW)
+) != 0
+print(algorithm_or_grow[:, 0, 0].astype(int).tolist())
+```
+
+This is a cause filter for `sample_flags`; it is not identical to
+`mask_rej`. `mask_rej` is the final boolean rejection/exclusion mask for
+the latest rejection step, while `sample_flags` records why individual samples
+were unavailable or why a tentative rejection was restored. For cause-specific
+selections, prefer explicit `sample_flags` bit tests.
+
+```{python}
+not_used_flags = (
+    imc.SampleFlags.INPUT_MASK
+    | imc.SampleFlags.NONFINITE
+    | imc.SampleFlags.THRESHOLD
+    | imc.SampleFlags.PREVIOUS
+    | imc.SampleFlags.ALGORITHM
+    | imc.SampleFlags.GROW
+)
+not_used = (sample_flags & not_used_flags) != 0
+print(not_used[:, 0, 0].astype(int).tolist())
+```
+
+## 4. Restored Tentative Rejections
+
+For iterative sigma/CCD/linear clipping, `nkeep` and `maxrej` can restore samples
+that were tentatively out of bounds. `diagnostics="full"` records those
+candidates on `sample_flags` without marking them as final algorithm rejections.
+
+```{python}
+restore_arr = np.array([0.0, 1.0, 100.0], dtype="float32").reshape(3, 1, 1)
+
+cmb_restore = imc.Combiner(restore_arr)
+cmb_restore.reject(
+    imc.SigClip(
+        sigma=(10.0, 0.5),
+        maxiters=1,
+        nkeep=3,
+        cenfunc="median",
+        clip_cen="median",
+        revert_on_nkeep=True,
+    ),
+    diagnostics="full",
+)
+
+print(cmb_restore.mask_rej[:, 0, 0].astype(int).tolist())
+print(cmb_restore.sample_flags[:, 0, 0].tolist())
+```
+
+The high sample was tentatively rejected, then restored by `nkeep`. It receives
+`imc.SampleFlags.RESTORED_NKEEP`, but not `imc.SampleFlags.ALGORITHM`.
+The per-output-element `output_flags` map still records that `nkeep` affected
+this output element.
+
+## 5. Spatial `grow`
+
+`grow` expands algorithm rejections spatially within each frame. Samples added
+only by this expansion get `imc.SampleFlags.GROW`.
+
+```{python}
+grow_stack = np.zeros((5, 5, 5), dtype="float32")
+grow_stack[0, 2, 2] = 100.0
+
+cmb_grow = imc.Combiner(grow_stack)
+cmb_grow.reject(
+    imc.SigClip(sigma=1.0, maxiters=1, nkeep=0),
+    grow=1,
+    diagnostics="full",
+)
+sample_flags_grow = cmb_grow.sample_flags
+output_flags = cmb_grow.output_flags
+
+print(f"center sample: {sample_flags_grow[0, 2, 2]} -> {decode_sample_flags(int(sample_flags_grow[0, 2, 2]))}")
+print(f"neighbor sample: {sample_flags_grow[0, 1, 2]} -> {decode_sample_flags(int(sample_flags_grow[0, 1, 2]))}")
+```
+
+The center was rejected by the algorithm (`imc.SampleFlags.ALGORITHM`). The
+direct neighbor was not part of the clipping calculation, but it was added by
+growth (`imc.SampleFlags.GROW`).
+
+## 6. Previous Chained Combiner Stages
+
+In Chained Combiner, `sample_flags` is stage-local. If a sample was removed by an
+earlier stage, a later `diagnostics="full"` rejection marks it as
+`previous stage` (`imc.SampleFlags.PREVIOUS`) instead of replaying the older
+cause.
+
+```{python}
+chain_arr = np.array([1.0, 2.0, 100.0, 4.0, 5.0], dtype="float32").reshape(5, 1, 1)
+
+cmb = imc.Combiner(chain_arr).threshold(-np.inf, 10.0)
+cmb.reject(imc.MinMaxClip(n_min=2, n_max=0), diagnostics="full")
+
+print(cmb.sample_flags[:, 0, 0].tolist())
+for i, value in enumerate(cmb.sample_flags[:, 0, 0]):
+    print(f"sample {i}: {int(value):2d} -> {', '.join(decode_sample_flags(int(value)))}")
+```
+
+Here the `100.0` sample was already removed by the threshold stage, so the later
+`MinMaxClip` stage records it as `imc.SampleFlags.PREVIOUS`. The low-side
+samples rejected by the current algorithm get `imc.SampleFlags.ALGORITHM`.
+
+## 7. Per-Output-Element `output_flags`
+
+The per-output-element `output_flags` map uses a separate bit namespace:
+
+| Flag | Value | Meaning |
+|---|---:|---|
+| `imc.OutputFlags.PREMASKED` | `1` | At least one sample at this output element was pre-masked |
+| `imc.OutputFlags.MAXITERS` | `2` | Iterative rejection reached `maxiters` |
+| `imc.OutputFlags.NKEEP` | `4` | `nkeep` affected the rejection outcome |
+| `imc.OutputFlags.MAXREJ` | `8` | `maxrej` affected the rejection outcome |
+| `imc.OutputFlags.GROW` | `16` | `grow` added at least one rejected sample at this output element |
+
+These bits describe the per-output-stack outcome, not a single sample. Use
+`mask_rej.sum(axis=0)` to count marked samples, and use `sample_flags` when you
+need per-sample provenance.
+
+`mask_rej` is not the same as `output_flags != 0`. They have different shapes
+and meanings:
+
+- `mask_rej` is stack-shaped and marks final rejected samples.
+- `output_flags` is spatial-shaped and marks status conditions for each output
+  element.
+- A normal algorithm rejection can have `output_flags == 0`.
+- `output_flags` can be nonzero even when no final sample was rejected, for
+  example when `nkeep` or `maxrej` restored tentative rejections.
+
+```{python}
+print(f"output_flags map shape: {output_flags.shape}")
+print(f"output_flags values: {np.unique(output_flags).tolist()}")
+```
+
+The same pattern works for per-output-element status maps:
+
+```{python}
+output_bits = {
+    imc.OutputFlags.PREMASKED: "pre-masked sample present",
+    imc.OutputFlags.MAXITERS: "maxiters reached",
+    imc.OutputFlags.NKEEP: "nkeep affected outcome",
+    imc.OutputFlags.MAXREJ: "maxrej affected outcome",
+    imc.OutputFlags.GROW: "grow added samples",
+}
+
+
+def decode_output_flags(value):
+    return [label for bit, label in output_bits.items() if value & bit] or ["normal"]
+
+
+for value in np.unique(output_flags):
+    print(f"output_flags {int(value):2d} -> {', '.join(decode_output_flags(int(value)))}")
+```

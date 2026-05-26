@@ -1,0 +1,63 @@
+# MinMaxClip { #imcombiners.MinMaxClip }
+
+```python
+MinMaxClip(n_min=1, n_max=1, grow=None)
+```
+
+Reject the smallest and largest unmasked values at each pixel.
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**n_min**]{.parameter-name} [:]{.parameter-annotation-sep} [int or float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Number of minimum-side values to reject. Values ``>= 1`` are a frame count. Values in ``[0, 1)`` are a fraction of the total frame count ``N``, converted via ``int(N * n_min + 0.001)``.
+
+<code>[**n_max**]{.parameter-name} [:]{.parameter-annotation-sep} [int or float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Same convention as `n_min`, applied to the maximum-side tail.
+
+<code>[**grow**]{.parameter-name} [:]{.parameter-annotation-sep} [float or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Optional radius in pixels used to grow `mask_rej` spatially after rejection. Axis 0 is the stack axis and is never grown across. `None` disables growth and skips the extra calculation.
+
+## Attributes
+
+| Name | Description |
+| --- | --- |
+| [grow](#imcombiners.MinMaxClip.grow) | The type of the None singleton. |
+| [n_max](#imcombiners.MinMaxClip.n_max) | int([x]) -> integer |
+| [n_min](#imcombiners.MinMaxClip.n_min) | int([x]) -> integer |
+
+## Methods
+
+| Name | Description |
+| --- | --- |
+| [apply](#imcombiners.MinMaxClip.apply) | Apply MinMaxClip to an image stack. |
+
+### apply { #imcombiners.MinMaxClip.apply }
+
+```python
+MinMaxClip.apply(arr, mask=None, *, validate=True)
+```
+
+Apply MinMaxClip to an image stack.
+
+#### Parameters {.doc-section .doc-section-parameters}
+
+<code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *spatial))]{.parameter-annotation}</code>
+
+:   Image stack. Inputs with more than 3 dimensions are flattened internally; output shapes match the trailing spatial dimensions of the input.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Input mask; `True` means already masked. Must have the same shape as `arr` before any internal flattening.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, validate inputs before calling the kernel.
+
+#### Returns {.doc-section .doc-section-returns}
+
+<code>[]{.parameter-name} [:]{.parameter-annotation-sep} [mask_rej, std, low, upp, nit, output_flags : tuple of ndarray]{.parameter-annotation}</code>
+
+:   Rejection mask and diagnostics from :func:`imcombiners.kernels.minmax`. `std` is the per-pixel spread used by sigma/CCD clipping and `None` for rejection algorithms without a spread diagnostic.

@@ -1,0 +1,76 @@
+# kernels.pclip { #imcombiners.kernels.pclip }
+
+```python
+kernels.pclip(
+    arr,
+    *,
+    mask=None,
+    frac=-0.5,
+    sigma=3.0,
+    nkeep=1,
+    grow=None,
+    validate=True,
+)
+```
+
+IRAF-style percentile clipping at each pixel.
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *spatial))]{.parameter-annotation}</code>
+
+:   Image stack. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Integer inputs are promoted to the package's floating workspace when `validate` is `True`. Inputs with more than 3 dimensions are flattened internally; output shapes match the trailing spatial dimensions of the input.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Input mask; `True` means already masked. Must have the same shape as `arr` before any internal flattening.
+
+<code>[**frac**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [-0.5]{.parameter-default}</code>
+
+:   IRAF `pclip` value. If ``abs(frac) < 1``, it is converted to an integer rank offset using half of the input image count. Positive values estimate sigma from the high side of the sorted median; negative values estimate sigma from the low side.
+
+<code>[**sigma**]{.parameter-name} [:]{.parameter-annotation-sep} [float or tuple of float]{.parameter-annotation} [ = ]{.parameter-default-sep} [3.0]{.parameter-default}</code>
+
+:   Lower and upper clipping thresholds applied to the pclip-estimated sigma. This maps to IRAF `lsigma` and `hsigma`.
+
+<code>[**nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Minimum number of unmasked samples to retain after pclip rejection.
+
+<code>[**grow**]{.parameter-name} [:]{.parameter-annotation-sep} [float or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Optional radius in pixels used to grow `mask_rej` spatially after rejection. Axis 0 is the stack axis and is never grown across. `None` disables growth and skips the extra calculation.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, check dimensionality and normalize dtype/contiguity before entering the Rust kernel. If `False`, callers must provide inputs that satisfy the compiled kernel assumptions.
+
+## Returns {.doc-section .doc-section-returns}
+
+<code>[**mask_rej**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool, shape (N, *spatial)]{.parameter-annotation}</code>
+
+:   `True` where a value was rejected by this kernel. ``mask_rej.sum(axis=0)`` is the per-output rejected count.
+
+<code>[**std**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial) or None)]{.parameter-annotation}</code>
+
+:   Per-pixel spread used by sigma/CCD clipping. `None` for rejection algorithms without a spread diagnostic.
+
+<code>[**low**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
+
+:   Lower retained-value bound. Bounds are inclusive: values equal to `low` are retained.
+
+<code>[**upp**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
+
+:   Upper retained-value bound. Bounds are inclusive: values equal to `upp` are retained.
+
+<code>[**nit**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of uint8, shape (*spatial)]{.parameter-annotation}</code>
+
+:   Iteration-count map.
+
+<code>[**output_flags**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of uint8, shape (*spatial)]{.parameter-annotation}</code>
+
+:   Bit-coded status. ``0`` means normal completion; bit ``1`` means at least one pre-masked sample at this output element; bit ``16`` means `grow` added at least one rejected sample at this output element. Iterative kernels also use bit ``2`` for maxiters, bit ``4`` for `nkeep`, and bit ``8`` for `maxrej`. Bits are OR-ed. `output_flags` is a per-output diagnostic; use ``mask_rej.sum(axis=0)`` to count samples rejected by this step.
+
+## Notes {.doc-section .doc-section-notes}
+
+This follows IRAF `imcombine` pclip semantics: choose a sorted rank offset from the median, use that sample's distance from the median as sigma, then apply lower and upper sigma thresholds.

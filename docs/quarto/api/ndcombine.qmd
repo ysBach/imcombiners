@@ -1,0 +1,186 @@
+# ndcombine { #imcombiners.ndcombine }
+
+```python
+ndcombine(
+    arr,
+    mask=None,
+    thresholds=None,
+    combine='mean',
+    reject=None,
+    sigma=(3.0, 3.0),
+    cenfunc='median',
+    clip_cen=None,
+    maxiters=5,
+    ddof=0,
+    nkeep=1,
+    maxrej=None,
+    n_minmax=(1, 1),
+    rdnoise=0.0,
+    gain=1.0,
+    snoise=0.0,
+    pclip=-0.5,
+    zero=None,
+    scale=None,
+    zero_to_0th=True,
+    scale_to_0th=True,
+    zero_sigclip_kwargs=None,
+    scale_sigclip_kwargs=None,
+    weight=None,
+    revert_on_nkeep=True,
+    grow=None,
+    full=False,
+    diagnostics=None,
+    scale_ref=1.0,
+    zero_ref=0.0,
+    validate=True,
+)
+```
+
+Combine an image stack with optional normalization and rejection.
+
+This is the compact ndcombine() wrapper for call sites that prefer one
+function over an explicit :class:`Combiner` workflow. A pure
+``combine="lmedian"`` or
+``combine="lmed"`` call with no mask, rejection, zero, scale, or weight
+preserves accepted integer input dtypes. Any path that needs masking,
+rejection, normalization, or weights uses the normal floating workspace.
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *spatial))]{.parameter-annotation}</code>
+
+:   Image stack. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. `uint8`, `uint16`, and `int16` are promoted to `float32`; `int32` is promoted to `float64`; `float32` and `float64` are preserved. Other dtypes, including `int64` and `float128`, are not silently cast. If your data use an unsupported dtype, cast them explicitly before calling `ndcombine`; there is no full-precision `int64` combine path because the package does not provide a `float128` workspace. Inputs with more than 3 dimensions are flattened internally; all outputs are reshaped back to the original trailing spatial dimensions.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Input mask with the same shape as `arr`; `True` means masked.
+
+<code>[**thresholds**]{.parameter-name} [:]{.parameter-annotation-sep} [tuple of float or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Inclusive lower and upper retained-value bounds applied before zero/scale, rejection, and combination. Values below the lower bound or above the upper bound are recorded in `mask_thresh` when diagnostics are requested and are treated as masked for later stages. For CCD images, a typical choice is ``thresholds=(0, satlevel)`` to remove bad/cold pixels and saturated pixels, or ``thresholds=(0, 0.99 * satlevel)`` to also exclude near-saturated pixels that are usually not useful for normalization, rejection, or final combination.
+
+<code>[**combine**]{.parameter-name} [:]{.parameter-annotation-sep} [str]{.parameter-annotation} [ = ]{.parameter-default-sep} [\'mean\']{.parameter-default}</code>
+
+:   Combine method. Supported aliases are `"mean"`, `"average"`, `"avg"`, `"median"`, `"med"`, `"lmedian"`, `"lmed"`, `"sum"`, `"min"`, `"max"`, `"variance"`, `"var"`, `"weighted_average"` and `"wvg"`.
+
+<code>[**reject**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'minmax\', \'pclip\', \'sigclip\', \'ccdclip\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"minmax\"]{.parameter-default}</code>
+
+:   Rejection algorithm to apply before combining. `None` disables rejection.
+
+<code>[**sigma**]{.parameter-name} [:]{.parameter-annotation-sep} [float or tuple of float]{.parameter-annotation} [ = ]{.parameter-default-sep} [(3.0, 3.0)]{.parameter-default}</code>
+
+:   Lower and upper sigma thresholds for `"sigclip"` and `"ccdclip"`.
+
+<code>[**cenfunc**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+
+:   Center estimator used by iterative rejection.
+
+<code>[**clip_cen**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+
+:   Center used to compute the spread for iterative rejection. `None` uses `cenfunc`. `lmedian` accepts the alias `lmed`.
+
+<code>[**maxiters**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [5]{.parameter-default}</code>
+
+:   Maximum number of rejection iterations.
+
+<code>[**ddof**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [0]{.parameter-default}</code>
+
+:   Delta degrees of freedom for spread estimates and for ``combine="variance"``. Variance is computed from final valid values after input mask and rejection are applied.
+
+<code>[**nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Minimum number of unmasked values to preserve at each pixel. The default, `1`, prevents clipping from rejecting every finite sample in a per-output stack. Set `0` only when all samples may be rejected.
+
+<code>[**maxrej**]{.parameter-name} [:]{.parameter-annotation-sep} [int or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Maximum number of values that may be rejected at each pixel. `None` means no limit.
+
+<code>[**n_minmax**]{.parameter-name} [:]{.parameter-annotation-sep} [tuple of int or float]{.parameter-annotation} [ = ]{.parameter-default-sep} [(1, 1)]{.parameter-default}</code>
+
+:   Number or fraction of low and high values rejected by `"minmax"`. Values greater than or equal to 1 are frame counts; values in `[0, 1)` are fractions of the original stack size.
+
+<code>[**rdnoise**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+
+:   CCD noise-model parameters used by `"ccdclip"`. `gain` must be finite and positive when validation is enabled.
+
+<code>[**gain**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+
+:   CCD noise-model parameters used by `"ccdclip"`. `gain` must be finite and positive when validation is enabled.
+
+<code>[**snoise**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+
+:   CCD noise-model parameters used by `"ccdclip"`. `gain` must be finite and positive when validation is enabled.
+
+<code>[**pclip**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [-0.5]{.parameter-default}</code>
+
+:   IRAF-style pclip rank offset. Values with ``abs(pclip) < 1`` are converted to an integer offset using half of the input image count.
+
+<code>[**zero**]{.parameter-name} [:]{.parameter-annotation-sep} [array-like, str, callable, or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Per-plane values to subtract before scaling. Strings select per-plane statistics: plain (`"mean"`, `"median"`, `"sum"`, `"min"`, `"max"` and common aliases) or sigma-clipped (`"sigclip_mean"` / `"mean_sc"` and `"sigclip_median"` / `"median_sc"` / `"med_sc"`, using ``sigma=3``, ``maxiters=5`` by default). Callables are evaluated once per image plane.
+
+<code>[**scale**]{.parameter-name} [:]{.parameter-annotation-sep} [array-like, str, callable, or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Per-plane values used as divisors after zero subtraction. The same string and callable rules as `zero` apply, including the sigma-clipped variants. Scale values must be finite and non-zero when validation is enabled.
+
+<code>[**zero_to_0th**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, subtract the first zero value from all zero values. `True` is the default behavior to follow IRAF. Setting this to `True` makes only a small subtraction happen, so real pixel values change only slightly and Poisson-noise calculations remain well behaved.
+
+<code>[**scale_to_0th**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, divide all scale values by the first scale value. `True` is the default behavior to follow IRAF. Setting this to `True` makes only a small division happen, so real pixel values change only slightly and Poisson-noise calculations remain well behaved.
+
+<code>[**zero_sigclip_kwargs**]{.parameter-name} [:]{.parameter-annotation-sep} [dict or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Keyword arguments used only when `zero` or `scale` is a sigma-clipped statistic alias such as `"mean_sc"` or `"med_sc"`. Supported keys are `sigma`, `maxiters`, `cenfunc`, `clip_cen`, and `ddof`.
+
+<code>[**scale_sigclip_kwargs**]{.parameter-name} [:]{.parameter-annotation-sep} [dict or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Keyword arguments used only when `zero` or `scale` is a sigma-clipped statistic alias such as `"mean_sc"` or `"med_sc"`. Supported keys are `sigma`, `maxiters`, `cenfunc`, `clip_cen`, and `ddof`.
+
+<code>[**weight**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N))]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Per-plane weights required by weighted-average combine.
+
+<code>[**revert_on_nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, an iteration that would leave fewer than `nkeep` usable samples at a pixel is reverted in full for that pixel. Input masks, threshold masks, and non-finite samples remain excluded. The default is `True`. If `False`, clipping is strict and may leave fewer than `nkeep` samples.
+
+<code>[**grow**]{.parameter-name} [:]{.parameter-annotation-sep} [float or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Non-negative radius in pixels used to grow `mask_rej` spatially after rejection. Axis 0 is the stack axis and is never grown across. `None` disables growth and skips the extra calculation. Growth applies only to samples rejected by `reject`, not to input masks or threshold masks.
+
+<code>[**full**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [False]{.parameter-default}</code>
+
+:   Legacy alias for ``diagnostics="simple"``. Prefer `diagnostics`.
+
+<code>[**diagnostics**]{.parameter-name} [:]{.parameter-annotation-sep} [(None, \'simple\', \'full\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Diagnostic product level. `None` returns only the combined image and keeps the fused output-only fast paths. `"simple"` returns the combined image plus the existing per-output-element diagnostics. `"full"` returns the `"simple"` products plus a stack-shaped `uint8` `sample_flags` array.
+
+<code>[**scale_ref**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1.0]{.parameter-default}</code>
+
+:   Reference scale and zero-point parameters for `"ccdclip"`.
+
+<code>[**zero_ref**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1.0]{.parameter-default}</code>
+
+:   Reference scale and zero-point parameters for `"ccdclip"`.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, validate public-boundary inputs. If `False`, callers must provide arrays with correct dimensionality, contiguity, dtype, mask shape, finite scale values, and valid rejection parameters.
+
+## Returns {.doc-section .doc-section-returns}
+
+<code>[**combined**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
+
+:   Combined image, returned when `diagnostics` is `None`.
+
+<code>[]{.parameter-name} [:]{.parameter-annotation-sep} [combined, mask_rej, mask_thresh, std, low, upp, nit, output_flags : tuple]{.parameter-annotation}</code>
+
+:   Returned when ``diagnostics="simple"`` or legacy ``full=True``. Rejection diagnostics are `None` when `reject` is `None`; `mask_thresh` is `None` when `thresholds` is `None`. `mask_rej` and `mask_thresh` have shape ``(N, *spatial)``; `low`, `upp`, `nit`, and `output_flags` have shape ``(*spatial,)``. `std` has shape ``(*spatial,)`` for sigma/CCD clipping and is `None` for rejection algorithms without a spread diagnostic. `low` and `upp` are inclusive rejection bounds: values equal to a bound are retained. ``mask_rej.sum(axis=0)`` is the number rejected by that rejection step, including any samples added by `grow`. The number actually used for combining is the count of finite samples after input mask and rejection mask are applied. `output_flags` bit ``16`` marks output elements where growth added at least one rejected sample; `low`, `upp`, `nit`, and `std` still describe the underlying clipping calculation. `std` is the per-pixel spread used by sigma/CCD clipping, and `None` for rejection algorithms without a spread diagnostic.
+
+<code>[]{.parameter-name} [:]{.parameter-annotation-sep} [combined, ..., sample_flags : tuple]{.parameter-annotation}</code>
+
+:   Returned when ``diagnostics="full"``. `sample_flags` has dtype `uint8` and shape ``(N, *spatial)``. Its bits are `1=input mask/BPM`, `2=non-finite`, `4=threshold mask`, `8=final algorithm rejection`, `16=added by grow`, and `32=already masked before this rejection step`; iterative sigma/CCD clipping can also set `64=tentatively rejected then restored by nkeep` and `128=tentatively rejected then restored by maxrej`. The per-output-element `output_flags` map uses a separate bit namespace.

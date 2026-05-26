@@ -1,0 +1,52 @@
+website:
+  sidebar:
+  - contents:
+    - api/index.qmd
+    - contents:
+      - api/Combiner.qmd
+      - api/SigClip.qmd
+      - api/CcdClip.qmd
+      - api/LinearClip.qmd
+      - api/MinMaxClip.qmd
+      - api/PClip.qmd
+      - api/Rejector.qmd
+      - api/SampleFlags.qmd
+      - api/OutputFlags.qmd
+      - api/resolve_zero_scale.qmd
+      section: 1 Pipeline API
+    - contents:
+      - api/kernels.mean.qmd
+      - api/kernels.median.qmd
+      - api/kernels.lmedian.qmd
+      - api/kernels.summation.qmd
+      - api/kernels.minimum.qmd
+      - api/kernels.maximum.qmd
+      - api/kernels.variance.qmd
+      - api/kernels.weighted_average.qmd
+      - api/kernels.grow_mask.qmd
+      - api/kernels.sigclip.qmd
+      - api/kernels.sigclip_mask.qmd
+      - api/kernels.sigclip_combine.qmd
+      - api/kernels.ccdclip.qmd
+      - api/kernels.ccdclip_mask.qmd
+      - api/kernels.ccdclip_combine.qmd
+      - api/kernels.linearclip.qmd
+      - api/kernels.minmax.qmd
+      - api/kernels.minmax_mask.qmd
+      - api/kernels.minmax_combine.qmd
+      - api/kernels.pclip.qmd
+      - api/kernels.pclip_mask.qmd
+      - api/kernels.pclip_combine.qmd
+      section: 2 Kernel API
+    - contents:
+      - api/ndcombine.qmd
+      - api/place_into_padded.qmd
+      section: 3 Compatibility API
+    - contents:
+      - api/get_rayon_num_threads.qmd
+      - api/set_rayon_num_threads.qmd
+      - api/get_parallel_threshold.qmd
+      - api/set_parallel_threshold.qmd
+      section: 4 Parallel Controls
+    id: api
+  - id: dummy-sidebar

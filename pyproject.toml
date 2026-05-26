@@ -1,0 +1,79 @@
+[build-system]
+requires = ["maturin>=1.5,<2"]
+build-backend = "maturin"
+
+[project]
+name = "imcombiners"
+version = "0.1.0"
+description = "Rust-backed image stack combine + rejection kernels (IRAF imcombine parity)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+
+[project.urls]
+Repository = "https://github.com/ysbach/imcombiners"
+Issues     = "https://github.com/ysbach/imcombiners/issues"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7",
+    "pytest-benchmark>=4",
+]
+dev = [
+    "pytest>=7",
+    "pytest-benchmark>=4",
+    "ruff",
+    "maturin>=1.5,<2",
+    "ipython",
+]
+docs = [
+    "jupyter",
+    "matplotlib",
+    "quartodoc",
+    # quartodoc 0.7 uses the pre-1.0 griffe API.
+    "griffe<1",
+]
+bench = [
+    "astropy>=6.1.7",
+    "bottleneck>=1.3",
+    "ccdproc>=2.5.1",
+    "fitsio>=1.2",
+]
+
+[tool.maturin]
+bindings = "pyo3"
+python-source = "python"
+module-name = "imcombiners._core"
+profile = "release"
+features = ["extension-module"]
+exclude = [
+    "**/.DS_Store",
+    "**/__pycache__/*",
+    "**/*.pyc",
+    "**/*.so",
+    "build/**",
+    "python/*.egg-info/**",
+    "target/**",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+extend-exclude = [".uv-cache"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "NPY"]
+
+[tool.pytest.ini_options]
+markers = [
+    "performance: opt-in performance regression checks",
+]

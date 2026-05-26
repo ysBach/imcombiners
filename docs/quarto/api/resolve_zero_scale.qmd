@@ -1,0 +1,57 @@
+# resolve_zero_scale { #imcombiners.resolve_zero_scale }
+
+```python
+resolve_zero_scale(
+    name,
+    values,
+    arr,
+    *,
+    nonzero=False,
+    to_0th=False,
+    sigclip_kwargs=None,
+    validate=True,
+)
+```
+
+Resolve a numeric, string, or callable zero/scale input.
+
+This helper resolves one `zero` or `scale` argument. It is useful for
+advanced callers that want to inspect or reuse
+the per-plane vector that `Combiner.zero_scale`, `Combiner.combine`, and
+`ndcombine` would apply internally.
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**name**]{.parameter-name} [:]{.parameter-annotation-sep} [str]{.parameter-annotation}</code>
+
+:   Name used in error messages.
+
+<code>[**values**]{.parameter-name} [:]{.parameter-annotation-sep} [array-like, str, callable, or None]{.parameter-annotation}</code>
+
+:   Scalar/vector values, a named per-plane statistic, or a callable evaluated once for each image plane.  Plain statistics (computed on all finite pixels): `"mean"`, `"average"`, `"avg"`, `"median"`, `"med"`, `"sum"`, `"min"`, `"max"`.  Sigma-clipped statistics (``sigma=3``, ``maxiters=5``, ``cenfunc="median"`` by default): `"sigclip_mean"` / `"mean_sc"` and `"sigclip_median"` / `"median_sc"` / `"med_sc"`. These clip per-plane before computing the statistic, making the normalization robust to bright stars or cosmic rays. `sigclip_kwargs` can tune their clipping parameters.
+
+<code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *spatial))]{.parameter-annotation}</code>
+
+:   Workspace used for statistics and dtype normalization.
+
+<code>[**nonzero**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [False]{.parameter-default}</code>
+
+:   If `True`, reject zero values after resolving.
+
+<code>[**to_0th**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [False]{.parameter-default}</code>
+
+:   If `True`, normalize values relative to the first plane: subtract the first value for zero offsets or divide by the first value for scales.
+
+<code>[**sigclip_kwargs**]{.parameter-name} [:]{.parameter-annotation-sep} [dict or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Optional keyword arguments for sigma-clipped statistics. Supported keys are `sigma`, `maxiters`, `cenfunc`, `clip_cen`, and `ddof`.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, validate length, finiteness, and nonzero constraints. If `False`, callers are responsible for providing broadcast-compatible, finite values.
+
+## Returns {.doc-section .doc-section-returns}
+
+<code>[**values**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray or None]{.parameter-annotation}</code>
+
+:   Broadcast-ready array with shape `(1, 1, ...)` for scalar input or `(N, 1, ...)` for one value per input plane.

@@ -1,0 +1,12 @@
+# get_parallel_threshold { #imcombiners.get_parallel_threshold }
+
+```python
+get_parallel_threshold()
+```
+
+Return the output-element threshold where kernels switch to Rayon.
+
+The threshold is compared with ``np.prod(arr.shape[1:])`` after any
+internal flattening of trailing axes. Below this threshold, kernels use a
+serial loop to avoid Rayon overhead; at or above it, kernels use Rayon over
+output elements.

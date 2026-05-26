@@ -1,0 +1,566 @@
+---
+title: "Performance"
+---
+
+This page collects the performance model, implementation notes, thread tuning,
+and optimized-workspace guidance for `imcombiners`. Exact timings vary with
+shape, dtype, rejection density, stack depth, memory layout, CPU, and thread
+settings, so treat printed numbers as local measurements rather than universal
+constants. See [Benchmarks](benchmarks.qmd) for recorded benchmark tables.
+
+## 1. Implementation Tricks
+
+`imcombiners` is built around image-stack reductions where both algorithmic work
+and memory traffic matter. The following implementation choices are intended to
+change runtime and memory traffic, not mathematical results:
+
+- **Fuse output-only rejection and final reduction when it is exact.** IRAF avoids duplicate work when the rejection path already has the retained samples needed for the requested final value. `imc` applies that work-elimination principle through supported `mean`/`median` output-only Rust paths.
+- **Axis-first public layout.** `(N, *spatial)` matches the cheap `np.stack(images, axis=0)` construction path. Building a C-order `(H, W, N)` cube from separate images can cost a lot; see [Why The Stack Axis Is First](#why-the-stack-axis-is-first).
+- **Prepared float workspaces.** Public calls validate and promote dtypes at the boundary; hot loops can prepare a C-contiguous `float32`/`float64` workspace once and then use `validate=False` on already-checked data.
+- **Fused output-only kernels.** Supported `diagnostics=None` mean/median rejection calls combine rejection and final reduction in one Rust pass instead of materializing a full rejection mask, copying a NaN-filled stack, and calling a second combine kernel.
+- **Per-worker scratch reuse.** Each Rayon worker keeps reusable temporary buffers for one per-output stack: copied pixel values, boolean masks, sorted rank pairs, and statistic work arrays. As the worker moves from one output pixel to the next, those buffers are cleared and refilled instead of newly allocated.
+- **Raw contiguous slice indexing.** After validation, the Rust kernels require C-contiguous NumPy arrays. They view the stack as one flat memory slice and compute offsets directly, avoiding repeated multidimensional ndarray indexing and shape/stride bookkeeping in inner loops.
+- **CCD clip without a full gain copy.** `ccdclip`, `ccdclip_mask`, and output-only `ccdclip_combine` pass `gain` into Rust and evaluate rejection on gain-corrected per-pixel scratch values instead of first materializing a full `arr / gain` stack. Output-only `ccdclip` still combines the original source values.
+- **Mask-aware finite handling.** Non-finite samples are folded into masks once, so later inner loops can avoid redundant finite checks where correctness permits.
+
+## 2. Scope Of The Fastest Paths
+
+The fastest high-level rejection path is Standard Combiner:
+`cmb.combine(method, rejectors=..., diagnostics=None)` after `cmb = Combiner(arr)`, or the equivalent
+compact ndcombine() wrapper call. These calls can avoid building diagnostic products
+and, for supported single-rejector `mean`/`median` cases, can fuse rejection and
+the final reduction. If you need `last_reject`, `mask_rej`, `low`, `upp`, `nit`,
+or `output_flags`, use Chained Combiner or `diagnostics="simple"` and
+expect the extra work. Prepared hot loops can also use `validate=False` and
+`copy=False` after the caller has already checked dtype, shape, mask
+compatibility, and C-contiguity.
+
+Direct kernel calls (`import imcombiners.kernels as imck`) are not a different
+algorithm. For fused output-only rejection they call the same Rust kernels as
+the output-only public routes. They can be much faster than Chained Combiner
+because they do not build or retain diagnostics, and they can be faster than
+the default safe `Combiner` constructor because they skip object construction,
+validation, and default workspace copies. They cannot be expected to be much
+faster than
+`ndcombine(..., diagnostics=None)` or `Combiner(..., copy=False,
+validate=False).combine(..., diagnostics=None)` when the input is already a
+contiguous floating workspace; those are near-tie comparisons around the same
+core kernel.
+
+```{python}
+import numpy as np
+import imcombiners as imc
+import time
+```
+
+```{python}
+def time_call(func, *, warmups: int = 3, repeat: int = 5):
+    """Return ``(result, median_seconds)`` for a small local timing run."""
+    result = None
+    for _ in range(warmups):
+        result = func()
+
+    times = []
+    for _ in range(repeat):
+        t0 = time.perf_counter()
+        result = func()
+        times.append(time.perf_counter() - t0)
+    return result, float(np.median(times))
+
+
+def comparison_text(seconds: float, *, reference_seconds: float) -> str:
+    """Return an explicit comparison against a named reference runtime."""
+    ratio = reference_seconds / seconds
+    if np.isclose(ratio, 1.0, rtol=0.02):
+        return "about the same"
+    if ratio > 1.0:
+        return f"{ratio:.2f}x faster"
+    return f"{1.0 / ratio:.2f}x slower"
+
+
+def print_reference(description: str, call: str, seconds: float) -> None:
+    print(f"{description}:")
+    print(f"  {call:<58} {seconds * 1e3:8.1f} ms   reference row")
+
+
+def print_comparison(
+    description: str,
+    call: str,
+    seconds: float,
+    *,
+    reference_seconds: float,
+    reference_label: str,
+) -> None:
+    print(f"{description}:")
+    print(
+        f"  {call:<58} {seconds * 1e3:8.1f} ms   "
+        f"{comparison_text(seconds, reference_seconds=reference_seconds)} than "
+        f"{reference_label}"
+    )
+```
+
+## 3. When To Optimize
+
+The public API (`ndcombine`, `Combiner`) runs validation on every call:
+dtype checks, shape checks, and `np.ascontiguousarray` copies when needed.
+That is the right default — it catches mistakes early. But in a tight reduction
+loop where the data format is fixed and already verified once up front, those
+checks are pure overhead.
+
+**Use the optimized path when:**
+
+- The same stack shape and dtype recurs across many calls (e.g. a batch of
+  calibrated frames from one instrument).
+- You have already validated the data once at ingestion.
+- Profiling shows `imc` kernel calls are a real bottleneck.
+
+**Do not use it for:**
+
+- User-facing or one-off scripts — the validation errors are the safety net.
+- Data with unknown or mixed dtypes.
+- Stacks coming from untrusted sources.
+
+## 4. Workspace Requirements
+
+The Rust kernels require:
+
+1. **C-contiguous layout** — `arr.flags['C_CONTIGUOUS']` must be `True`.
+2. **Float workspace dtype** — `float32` for `uint8`, `uint16`, `int16`, and
+   `float32` inputs; `float64` for `int32` and `float64` inputs.
+
+Prepare the workspace once before the hot loop:
+
+```{python}
+def prepare_workspace(stack: np.ndarray) -> np.ndarray:
+    """Return a C-contiguous float workspace ready for validate=False calls."""
+    dtype = np.float64 if stack.dtype == np.dtype(np.int32) else np.float32
+    return np.ascontiguousarray(stack, dtype=dtype)
+```
+
+If your stack is already `float32` and C-contiguous (e.g. freshly read from a
+FITS file into a standard NumPy array), `prepare_workspace` is a no-op — no
+copy is made.
+
+## 5. Why The Stack Axis Is First
+
+`imcombiners` uses `(N, *spatial)` stacks, so a normal image cube is shaped
+`(N, H, W)` and the combine/reject axis is axis 0. This is deliberate.
+
+At first glance, `(H, W, N)` looks attractive because the per-pixel stack would
+be contiguous in memory for C-order NumPy arrays. That can make the inner Rust
+kernel read pattern slightly better when the axis-last workspace has already
+been prepared. However, building that workspace is not free:
+
+```python
+stack0 = np.stack(images, axis=0)   # shape (N, H, W)
+stackn = np.stack(images, axis=-1)  # shape (H, W, N)
+```
+
+Both calls allocate and copy the full cube. The difference is where each loaded
+2-D image lands. With `axis=0`, each image is copied into one contiguous slab of
+the output array. With `axis=-1`, each image is copied into a strided
+`[..., i]` plane of a C-order array. For common FITS-style workflows where
+images are loaded one at a time and combined once, that strided construction
+cost can be comparable to a whole rejection/combine kernel call.
+
+Local layout experiments found the prepared axis-last Rust kernels were only
+slightly faster for representative `sigclip`, `ccdclip`, `minmax`, and `pclip`
+mean/median cases, while `np.stack(..., axis=-1)` could be much slower than
+`np.stack(..., axis=0)` for large image stacks. Therefore the public convention
+keeps `N` on axis 0: it matches the cheapest natural NumPy stacking pattern and
+avoids making one-off reductions pay a large layout-construction cost for a
+small kernel-locality gain. It also keeps per-frame masks, weights, zero/scale
+values, growth behavior, and full rejection diagnostics aligned with one
+documented stack axis.
+
+`np.moveaxis(stack, 0, -1)` is cheap as a view, but it does not make the data
+contiguous in the axis-last order. A Rust kernel requiring contiguous
+`(H, W, N)` storage would still need a full copy such as
+`np.ascontiguousarray(np.moveaxis(stack, 0, -1))`.
+
+## 6. Public API Timing: What Work Is Being Compared?
+
+The first benchmark separates four public ways to compute the same final
+median image:
+
+- **compact ndcombine() wrapper, diagnostic**: `ndcombine(..., diagnostics="simple")[0]` computes the
+  final image and all rejection diagnostics.
+- **Chained Combiner**: `Combiner(...).reject(...).combine(...)`
+  computes and stores rejection state before reducing it.
+- **compact ndcombine() wrapper, output-only**: `ndcombine(..., diagnostics=None)` returns only the
+  final image. For supported rejection-plus-mean/median cases, this can use a
+  Rust path that avoids materializing diagnostics.
+- **Standard Combiner**: `Combiner(...).combine(..., rejectors=..., diagnostics=None)`
+  keeps the object-oriented call style while still returning only the final
+  image.
+
+The timings are grouped by the work requested. Diagnostic rows are compared
+with Chained Combiner, and output-only rows are compared with the Standard
+Combiner reference.
+
+```{python}
+rng = np.random.default_rng(20250311)
+stack = np.clip(
+    rng.normal(1000.0, 30.0, size=(31, 512, 512)),
+    0,
+    np.iinfo(np.uint16).max,
+).astype("uint16")
+
+out_diagnostic_one_call, t_diagnostic_one_call = time_call(
+    lambda: imc.ndcombine(
+        stack,
+        combine="median",
+        reject="sigclip",
+        sigma=(3.0, 3.0),
+        maxiters=5,
+        ddof=0,
+        diagnostics="simple",
+    )[0]
+)
+out_output_only_one_call, t_output_only_one_call = time_call(
+    lambda: imc.ndcombine(
+        stack,
+        combine="median",
+        reject="sigclip",
+        sigma=(3.0, 3.0),
+        maxiters=5,
+        ddof=0,
+    )
+)
+out_output_only_combiner, t_output_only_combiner = time_call(
+    lambda: imc.Combiner(stack).combine(
+        "median",
+        rejectors=imc.SigClip(sigma=3.0, maxiters=5, ddof=0),
+        diagnostics=None,
+    )
+)
+out_diagnostic_chained, t_diagnostic_chained = time_call(
+    lambda: (
+        imc.Combiner(stack)
+        .reject(imc.SigClip(sigma=3.0, maxiters=5, ddof=0))
+        .combine("median")
+    )
+)
+
+np.testing.assert_allclose(out_diagnostic_one_call, out_diagnostic_chained, rtol=1e-5)
+np.testing.assert_allclose(out_diagnostic_one_call, out_output_only_one_call, rtol=1e-5)
+np.testing.assert_allclose(out_diagnostic_one_call, out_output_only_combiner, rtol=1e-5)
+
+diagnostic_reference_label = "Chained Combiner"
+print_reference(
+    "Chained Combiner",
+    "Combiner(...).reject(...).combine(...)",
+    t_diagnostic_chained,
+)
+print_comparison(
+    "compact ndcombine() wrapper, diagnostic",
+    'ndcombine(..., diagnostics="simple")[0]',
+    t_diagnostic_one_call,
+    reference_seconds=t_diagnostic_chained,
+    reference_label=diagnostic_reference_label,
+)
+output_only_reference_label = "Standard Combiner"
+print_reference(
+    "Standard Combiner",
+    "combine(..., rejectors=..., diagnostics=None)",
+    t_output_only_combiner,
+)
+print_comparison(
+    "compact ndcombine() wrapper, output-only",
+    "ndcombine(..., diagnostics=None)",
+    t_output_only_one_call,
+    reference_seconds=t_output_only_combiner,
+    reference_label=output_only_reference_label,
+)
+```
+
+`ndcombine(diagnostics="simple")[0]` and Chained Combiner both compute
+diagnostic products. Their timings should be same-order; small differences are
+Python dispatch, validation, allocation, and normal timing noise. The
+`diagnostics=None` rows are intentionally separate. They return only the final image
+and can use a single-pass output-only reject-and-combine path, so they are
+faster because they do less reporting work. Use
+Standard Combiner when you want that
+fast path with an object-oriented API; use Chained Combiner
+when you want retained rejection state.
+
+## 7. Prepared Workspace: Same Work, Validation Skipped
+
+Prepare the workspace once, then skip repeated validation inside the hot loop.
+This section compares each `validate=False` call against the same public API
+shape with validation left on. That makes the ratio answer one clear question:
+how much did preparing the workspace once save?
+
+### 7.1 Chained Combiner
+
+```{python}
+stack_ws = prepare_workspace(stack)
+
+out_chained_prepared, t_chained_prepared = time_call(
+    lambda: (
+        imc.Combiner(stack_ws, validate=False)
+        .reject(imc.SigClip(sigma=3.0, maxiters=5, ddof=0))
+        .combine("median")
+    )
+)
+print_reference(
+    "Chained Combiner with validation",
+    "Combiner(...)",
+    t_diagnostic_chained,
+)
+print_comparison(
+    "prepared workspace, Chained Combiner",
+    "Combiner(..., validate=False)",
+    t_chained_prepared,
+    reference_seconds=t_diagnostic_chained,
+    reference_label="Chained Combiner with validation",
+)
+```
+
+This pair uses the public `Combiner` route as its reference. It answers a narrow
+question: how much repeated validation costs when you keep the Chained Combiner
+shape. It is not a claim that `Combiner(...).reject(...).combine(...)` beats
+compact ndcombine() wrapper for this output-only workflow.
+
+### 7.2 Standard Combiner
+
+For output-only reductions, the fastest public route is usually Standard
+Combiner with a prepared workspace:
+`Combiner(..., copy=False, validate=False).combine(..., rejectors=..., diagnostics=None)`.
+Compare it only with the Standard Combiner reference above: both return
+just the final image, and both use the single-pass Rust reject-and-combine
+kernels for supported `mean`/`median` cases. Adding `validate=False` removes
+repeated boundary checks and workspace conversion from that same fast path;
+`copy=False` also avoids copying an already-prepared workspace into the
+combiner:
+
+```{python}
+def output_only_combiner_no_validation(arr):
+    return imc.Combiner(arr, copy=False, validate=False).combine(
+        "median",
+        rejectors=imc.SigClip(sigma=3.0, maxiters=5, ddof=0),
+        diagnostics=None,
+    )
+
+
+out_output_only_prepared, t_output_only_prepared = time_call(
+    lambda: output_only_combiner_no_validation(stack_ws)
+)
+print_reference(
+    "Standard Combiner with validation",
+    "Combiner(...).combine(..., rejectors=..., diagnostics=None)",
+    t_output_only_combiner,
+)
+print_comparison(
+    "prepared workspace, Standard Combiner",
+    "Combiner(..., copy=False, validate=False).combine(..., rejectors=..., diagnostics=None)",
+    t_output_only_prepared,
+    reference_seconds=t_output_only_combiner,
+    reference_label="Standard Combiner with validation",
+)
+```
+
+For already-contiguous `float32` input this prepared Standard Combiner route
+and direct kernel calls via
+`imck.sigclip_combine(..., validate=False)` are expected to
+near-tie, because both are thin Python wrappers over the same fused Rust
+kernel. Large wins come from avoiding diagnostics, repeated preparation, or
+default safe copies, not from a second hidden rejection algorithm.
+
+Verify the results agree:
+
+```{python}
+assert np.allclose(
+    out_diagnostic_one_call,
+    out_output_only_prepared,
+    atol=1e-5,
+), "results differ"
+assert np.allclose(
+    out_diagnostic_one_call,
+    out_chained_prepared,
+    atol=1e-5,
+), "results differ"
+print("outputs match")
+```
+
+The main trick is borrowed from IRAF `imcombine`: avoid a separate final
+average/median pass when the rejection calculation can produce the requested
+final image exactly. `imcombiners` uses that principle for output-only
+`sigclip`, `ccdclip`, `minmax`, and `pclip` mean/median calls. It also avoids
+diagnostic products when `diagnostics=None`, so the hot path does not materialize
+the full rejection-mask product, build a NaN-filled copy, and call a second
+combine kernel.
+
+The surrounding mechanics are Rust-specific: the kernels reuse per-worker
+scratch buffers instead of allocating small vectors per pixel, index C-order
+NumPy arrays through raw contiguous slices, and pass `ccdclip` gain into Rust so
+diagnostic, mask-only, and output-only CCD rejection can use gain-corrected
+scratch values without materializing a full gain-corrected stack. Output-only
+`ccdclip` additionally combines the original source values in the same fused
+path. Those details are intended to preserve the same final image while
+reducing memory traffic and allocation overhead.
+
+## 8. Small Stack Case: Same Comparison, Different `N`
+
+Skipping validation removes a fixed public-boundary cost: shape/dtype checks,
+contiguity handling, and possible workspace conversion. For a shallow stack —
+say, 5 images instead of 31 — the Rust kernel does less work per pixel, so that
+fixed overhead can be a larger fraction of the total runtime. That can make the
+reported relative ratio larger for small `N`, even though the absolute time saved
+is only a few milliseconds and is more sensitive to timing noise.
+
+```{python}
+rng_small = np.random.default_rng(20250311)
+stack_small = np.clip(
+    rng_small.normal(1000.0, 30.0, size=(5, 512, 512)),
+    0,
+    np.iinfo(np.uint16).max,
+).astype("uint16")
+stack_small_ws = prepare_workspace(stack_small)
+
+out_output_only_small, t_output_only_small = time_call(
+    lambda: imc.Combiner(stack_small).combine(
+        "median",
+        rejectors=imc.SigClip(sigma=3.0, maxiters=5, ddof=0),
+        diagnostics=None,
+    )
+)
+
+out_output_only_small_prepared, t_output_only_small_prepared = time_call(
+    lambda: output_only_combiner_no_validation(stack_small_ws)
+)
+
+np.testing.assert_allclose(
+    out_output_only_small,
+    out_output_only_small_prepared,
+    atol=1e-5,
+)
+print()
+print_reference(
+    "N=5 Standard Combiner with validation",
+    "Combiner(...).combine(..., rejectors=..., diagnostics=None)",
+    t_output_only_small,
+)
+print_comparison(
+    "N=5 prepared workspace, Standard Combiner",
+    "Combiner(..., copy=False, validate=False).combine(..., rejectors=..., diagnostics=None)",
+    t_output_only_small_prepared,
+    reference_seconds=t_output_only_small,
+    reference_label="N=5 Standard Combiner with validation",
+)
+print()
+print_reference(
+    "N=31 Standard Combiner with validation",
+    "Combiner(...).combine(..., rejectors=..., diagnostics=None)",
+    t_output_only_combiner,
+)
+print_comparison(
+    "N=31 prepared workspace, Standard Combiner",
+    "Combiner(..., copy=False, validate=False).combine(..., rejectors=..., diagnostics=None)",
+    t_output_only_prepared,
+    reference_seconds=t_output_only_combiner,
+    reference_label="N=31 Standard Combiner with validation",
+)
+```
+
+The `n=5` and `n=31` ratios should not be ranked as a universal rule. The
+smaller stack has less kernel work and can therefore show a larger percentage
+benefit from skipping validation, while the deeper stack may save more useful
+wall time in an actual hot loop. Reserve `validate=False` for workloads where
+profiling shows a real bottleneck; on shallow stacks, milliseconds-scale
+differences may be within timing noise.
+
+## 9. Thread Tuning
+
+::: {.callout-tip title="TL;DR"}
+The default settings are good enough for most use cases.
+:::
+
+There are two parameters that control `imc` parallelism:
+
+- **`RAYON_NUM_THREADS`** — how many threads Rayon uses inside the Rust kernels. Set it before starting Python, or right after importing `imc` and before any Rayon work; Rayon reads it once at thread-pool initialization and ignores later changes.
+- **`IMCOMBINERS_PARALLEL_THRESHOLD`** — the minimum output-element count required to use Rayon at all. Below this threshold `imc` runs a serial loop instead. The default is `10000`, so images smaller than roughly 100x100 run serially.
+
+Both knobs can be set from the shell before starting Python:
+
+```bash
+export RAYON_NUM_THREADS=8
+export IMCOMBINERS_PARALLEL_THRESHOLD=4096
+python your_pipeline.py
+```
+
+They can also be set from Python before heavy `imc` work:
+
+```python
+import imcombiners as imc
+
+imc.set_rayon_num_threads(8)
+imc.set_parallel_threshold(4096)
+print(imc.get_rayon_num_threads(), imc.get_parallel_threshold())
+```
+
+For a stack shaped `(N, H, W)`, the threshold is compared with `H * W`; for
+arbitrary N-D stacks, it is compared with `np.prod(stack.shape[1:])`.
+
+### Thread Benchmark Script
+
+`benchmark_threads.py` measures both the serial path and a range of Rayon thread
+counts in fresh subprocesses, so every candidate gets a clean thread pool. By
+default it runs `sigclip_median` on both `(5, 512, 512)` and `(31, 512, 512)`
+stacks and reports separate recommendations:
+
+```bash
+uv run python benchmarks/benchmark_threads.py
+```
+
+The reported values are a starting point for the measured workload, not a
+package-wide optimum. To tune for your own shape or operation:
+
+```bash
+uv run python benchmarks/benchmark_threads.py \
+  --op median --dtype float32 --n 31 --height 1024 --width 1024
+```
+
+Pass multiple `--n` values to cover several stack sizes in one run:
+
+```bash
+uv run python benchmarks/benchmark_threads.py --n 5 31 63
+```
+
+::: {.callout-note}
+**Default thread-count candidates.** On machines with <= 32 logical CPUs the
+script tests every parallel thread count: 2, 3, ..., `os.cpu_count()`. A
+dedicated serial baseline run covers the non-Rayon case, so single-thread Rayon
+is only tested if you pass it explicitly with `--threads`.
+
+On machines with > 32 logical CPUs, `os.cpu_count()` may not match your
+scheduler allocation. Pass `--threads` with explicit candidates, for example
+based on `SLURM_CPUS_PER_TASK`, or `--force-test` to get the sparse
+`{2, 4, 8, ..., ncpu}` list anyway.
+:::
+
+::: {.callout-note}
+The benchmark forces `IMCOMBINERS_PARALLEL_THRESHOLD=1` for every parallel
+candidate so Rayon is exercised regardless of image size. This avoids a small
+image silently running the serial path at every thread count. The forced value
+is a measurement tool, not a production recommendation.
+:::
+
+**More threads does not always mean faster.** Repeated runs can recommend
+different near-best values because timing varies with operation, dtype, number
+of images, output shape, CPU allocation, memory bandwidth, and machine load.
+For example, on an MBP 14" [2024, macOS 26.4.1,
+M4Pro(8P+4E/G20c/N16c/48G)], `RAYON_NUM_THREADS=6` was optimal for `n=5` while
+`RAYON_NUM_THREADS=12` was optimal for `n=31`, and both changed by about two
+threads after the machine load shifted. The tuner treats median times within
+`--tie-tolerance` of the fastest as near-ties and recommends the lower thread
+count. For a more stable estimate, increase `--repeats` and `--warmups`:
+
+```bash
+uv run python benchmarks/benchmark_threads.py --repeats 15 --warmups 3
+```
+
+If your pipeline also calls threaded NumPy/BLAS code, consider pinning
+`OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS`, `MKL_NUM_THREADS`, and
+`VECLIB_MAXIMUM_THREADS` to `1` while benchmarking to avoid measuring nested
+oversubscription.

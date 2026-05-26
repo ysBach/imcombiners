@@ -1,0 +1,23 @@
+# SampleFlags { #imcombiners.SampleFlags }
+
+```python
+SampleFlags()
+```
+
+Per-sample rejection/provenance flags.
+
+These bits apply to stack-shaped `sample_flags` arrays, not to the
+per-output-element `output_flags` diagnostic map.
+
+## Attributes
+
+| Name | Description |
+| --- | --- |
+| [ALGORITHM](#imcombiners.SampleFlags.ALGORITHM) | Per-sample rejection/provenance flags. |
+| [GROW](#imcombiners.SampleFlags.GROW) | Per-sample rejection/provenance flags. |
+| [INPUT_MASK](#imcombiners.SampleFlags.INPUT_MASK) | Per-sample rejection/provenance flags. |
+| [NONFINITE](#imcombiners.SampleFlags.NONFINITE) | Per-sample rejection/provenance flags. |
+| [PREVIOUS](#imcombiners.SampleFlags.PREVIOUS) | Per-sample rejection/provenance flags. |
+| [RESTORED_MAXREJ](#imcombiners.SampleFlags.RESTORED_MAXREJ) | Per-sample rejection/provenance flags. |
+| [RESTORED_NKEEP](#imcombiners.SampleFlags.RESTORED_NKEEP) | Per-sample rejection/provenance flags. |
+| [THRESHOLD](#imcombiners.SampleFlags.THRESHOLD) | Per-sample rejection/provenance flags. |

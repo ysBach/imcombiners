@@ -1,0 +1,193 @@
+---
+title: "06 Offset Stacking"
+---
+
+This tutorial shows how to use `place_into_padded()` when the object you want to keep is moving across otherwise fixed stars.
+
+The important convention is axis order:
+
+- Images are NumPy arrays indexed as `image[y, x]`.
+- `place_into_padded(images, offsets)` expects offsets in Python order: `(dy, dx)`, not `(x, y)`.
+- Positive `dy` places an image at larger row indices.
+- Positive `dx` places an image at larger column indices.
+
+That differs from the usual FITS/WCS habit of describing positions as `(x, y)`. When you start from an image-plane velocity vector `(vx, vy)`, convert it to an offset vector as `(dy, dx) = (vy, vx)`.
+
+```{python}
+import numpy as np
+import matplotlib.pyplot as plt
+
+import imcombiners as imc
+import imcombiners.kernels as imck
+```
+
+## 1. Make Stack
+
+We make nine 100×100 images. The stars are fixed in detector coordinates. The asteroid is an elliptical Gaussian whose center moves as
+
+$$
+\vec{x}(t) = \vec{x}_0 + \vec{v}_0 t.
+$$
+
+Here `v0` has length 5 pixels per frame at 150 degrees counter-clockwise from the image `+x` direction. In `(x, y)` this is roughly `(-4.33, +2.50)` pixels per frame.
+
+```{python}
+ny, nx = 100, 100
+n_frames = 9
+dt = 1.0
+speed = 5.0
+theta = np.deg2rad(150.0)
+vx = speed * np.cos(theta)
+vy = speed * np.sin(theta)
+
+x0, y0 = 72.0, 36.0
+times = np.arange(n_frames, dtype=np.float32) * dt
+asteroid_xy = np.column_stack([x0 + vx * times, y0 + vy * times])
+
+print(f"v0 in (x, y): ({vx:.2f}, {vy:.2f}) px/frame")
+print(f"v0 in Python (dy, dx): ({vy:.2f}, {vx:.2f}) px/frame")
+```
+
+```{python}
+y, x = np.mgrid[:ny, :nx]
+
+
+def gaussian_star(xc, yc, amp=900.0, sigma=1.3):
+    r2 = (x - xc) ** 2 + (y - yc) ** 2
+    return amp * np.exp(-0.5 * r2 / sigma**2)
+
+
+def elliptical_asteroid(xc, yc, amp=50.0, sigma_major=3.5, sigma_minor=1.1, angle_deg=150.0):
+    angle = np.deg2rad(angle_deg)
+    cos_a = np.cos(angle)
+    sin_a = np.sin(angle)
+    dx = x - xc
+    dy = y - yc
+    major = dx * cos_a + dy * sin_a
+    minor = -dx * sin_a + dy * cos_a
+    return amp * np.exp(-0.5 * ((major / sigma_major) ** 2 + (minor / sigma_minor) ** 2))
+
+
+stars = np.zeros((ny, nx), dtype=np.float32)
+for sx, sy, amp in [
+    (18.0, 20.0, 95.0),
+    (38.0, 76.0, 80.0),
+    (55.0, 48.0, 110.0),
+    (82.0, 82.0, 75.0),
+    (70.0, 18.0, 90.0),
+]:
+    stars += gaussian_star(sx, sy, amp=amp)
+
+rng = np.random.default_rng(20250311)
+frames = []
+for xc, yc in asteroid_xy:
+    image = 50.0 + stars + elliptical_asteroid(xc, yc)
+    image += rng.poisson(np.sqrt(image))  # Poisson noise
+    image += rng.normal(0.0, 4.0, size=(ny, nx))
+    frames.append(image.astype(np.float32))
+
+stack = np.stack(frames)
+```
+
+```{python}
+fig, axes = plt.subplots(1, 3, figsize=(10.5, 3.2), sharex=True, sharey=True)
+for ax, idx in zip(axes, [0, n_frames // 2, n_frames - 1]):
+    ax.imshow(stack[idx], origin="lower")
+    ax.scatter(asteroid_xy[idx, 0], asteroid_xy[idx, 1], s=35, facecolors="none", edgecolors="tab:red")
+    ax.set_title(f"Frame {idx}")
+plt.tight_layout()
+plt.show()
+```
+
+## 2. Star Frame With Standard Combiner
+
+A normal median combine keeps fixed stars and rejects or strongly suppresses the moving asteroid because it lands on different pixels in each frame.
+
+```{python}
+cmb_star = imc.Combiner(stack)
+star_frame = cmb_star.combine("median")
+```
+
+## 3. Object Frame
+
+To keep the asteroid, place each frame into a padded output stack with offsets that cancel the asteroid motion.
+
+The asteroid displacement in image coordinates is `(dx, dy) = (vx*t, vy*t)`. The placement offset must be the negative displacement, converted to Python order:
+
+$$
+(\mathrm{offset}_y, \mathrm{offset}_x) =
+\mathrm{round}(-v_y t,\ -v_x t).
+$$
+
+Rounding is required because `place_into_padded()` currently implements integer pixel offsets only. This is enough to show the frame-tracking behavior; subpixel registration would need interpolation before padding.
+
+```{python}
+offsets_yx = np.rint(np.column_stack([-vy * times, -vx * times])).astype(np.int64)
+print(offsets_yx)
+```
+
+```{python}
+asteroid_stack = imc.place_into_padded(list(stack), offsets_yx)
+cmb_asteroid = imc.Combiner(asteroid_stack)
+asteroid_frame = cmb_asteroid.combine("median")
+```
+
+## 4. Compare Outputs
+
+The fixed-star median has compact stars and little asteroid signal. The asteroid-rate median keeps the asteroid near one location and smears/rejects the stars because their positions move in the asteroid frame.
+
+```{python}
+fig, axes = plt.subplots(1, 2, figsize=(9, 4), sharex=False, sharey=False)
+
+axes[0].imshow(star_frame, origin="lower")
+axes[0].plot(asteroid_xy[:, 0], asteroid_xy[:, 1], "o-", color="tab:red", ms=3)
+axes[0].set_title("Median in star frame")
+
+axes[1].imshow(asteroid_frame, origin="lower")
+axes[1].set_title("Median in asteroid frame")
+
+for ax in axes:
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+
+plt.tight_layout()
+plt.show()
+```
+
+We can also compare small cutouts around the asteroid-track stack. The asteroid-frame cutout is compact; the star-frame cutout contains only weak residuals because the asteroid was rejected by the median.
+
+```{python}
+norm_offsets = offsets_yx - offsets_yx.min(axis=0)
+tracked_center_yx = np.rint(
+    np.array([asteroid_xy[0, 1], asteroid_xy[0, 0]]) + norm_offsets[0]
+).astype(int)
+cy, cx = tracked_center_yx
+
+half = 12
+asteroid_cutout = asteroid_frame[cy - half : cy + half + 1, cx - half : cx + half + 1]
+
+mid_idx = n_frames // 2
+star_cy, star_cx = np.rint([asteroid_xy[mid_idx, 1], asteroid_xy[mid_idx, 0]]).astype(int)
+star_cutout = star_frame[star_cy - half : star_cy + half + 1, star_cx - half : star_cx + half + 1]
+
+fig, axes = plt.subplots(1, 2, figsize=(7, 3.4))
+axes[0].imshow(star_cutout, origin="lower")
+axes[0].set_title("Star-frame cutout")
+axes[1].imshow(asteroid_cutout, origin="lower")
+axes[1].set_title("Asteroid-frame cutout")
+plt.tight_layout()
+plt.show()
+```
+
+The same sign convention applies in real data. If an object moves by `(+dx, +dy)` pixels between frames, pass offsets close to `(-dy, -dx)` so the object lands at the same padded-stack coordinate before combining.
+
+## 5. Performance Tips: direct kernel calls
+
+After `place_into_padded()` has prepared a floating stack, direct kernel calls can perform the final median directly:
+
+```{python}
+asteroid_low = imck.median(asteroid_stack, validate=False)
+
+np.testing.assert_allclose(asteroid_frame, asteroid_low)
+print("direct kernel calls match the Standard Combiner median.")
+```

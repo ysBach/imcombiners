@@ -1,0 +1,16 @@
+# kernels.pclip_mask { #imcombiners.kernels.pclip_mask }
+
+```python
+kernels.pclip_mask(
+    arr,
+    *,
+    mask=None,
+    frac=-0.5,
+    sigma=3.0,
+    nkeep=1,
+    grow=None,
+    validate=True,
+)
+```
+
+Return only the IRAF-style pclip rejection mask.

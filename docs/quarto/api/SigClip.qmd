@@ -1,0 +1,103 @@
+# SigClip { #imcombiners.SigClip }
+
+```python
+SigClip(
+    sigma=(3.0, 3.0),
+    maxiters=5,
+    cenfunc='median',
+    clip_cen=None,
+    ddof=0,
+    nkeep=1,
+    maxrej=None,
+    revert_on_nkeep=True,
+    grow=None,
+)
+```
+
+Iterative sigma-clipping rejection.
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**sigma**]{.parameter-name} [:]{.parameter-annotation-sep} [float or tuple of float]{.parameter-annotation} [ = ]{.parameter-default-sep} [(3.0, 3.0)]{.parameter-default}</code>
+
+:   Clipping threshold in units of the per-pixel std. A scalar applies the same value to both tails; a 2-tuple ``(sigma_lower, sigma_upper)`` clips asymmetrically.
+
+<code>[**maxiters**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [5]{.parameter-default}</code>
+
+:   Maximum number of clipping iterations per pixel.
+
+<code>[**ddof**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [0]{.parameter-default}</code>
+
+:   Delta degrees of freedom for the per-pixel std.
+
+<code>[**nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Minimum number of unmasked values to preserve at each pixel. An iteration that would drop below this count is reverted in full. The default, `1`, prevents clipping from rejecting every finite sample in a per-output stack. Set `0` only when all samples may be rejected.
+
+<code>[**maxrej**]{.parameter-name} [:]{.parameter-annotation-sep} [int or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Maximum number of values that may be rejected at each pixel. `None` means no limit.
+
+<code>[**cenfunc**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+
+:   Center estimator used each iteration. `lmedian` accepts the alias `lmed` and uses the lower of the two middle samples for even valid counts.
+
+<code>[**clip_cen**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+
+:   Center used when computing the spread for iterative rejection. `None` uses the same center as `cenfunc`; `lmedian` also accepts `lmed`.
+
+<code>[**revert_on_nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, an iteration that would leave fewer than `nkeep` usable samples at a pixel is reverted in full for that pixel. Input masks, threshold masks, and non-finite samples remain excluded. The default is `True`. If `False`, clipping is strict and may leave fewer than `nkeep` samples.
+
+<code>[**grow**]{.parameter-name} [:]{.parameter-annotation-sep} [float or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Optional radius in pixels used to grow `mask_rej` spatially after rejection. Axis 0 is the stack axis and is never grown across. `None` disables growth and skips the extra calculation.
+
+## Attributes
+
+| Name | Description |
+| --- | --- |
+| [cenfunc](#imcombiners.SigClip.cenfunc) | str(object='') -> str |
+| [clip_cen](#imcombiners.SigClip.clip_cen) | The type of the None singleton. |
+| [ddof](#imcombiners.SigClip.ddof) | int([x]) -> integer |
+| [grow](#imcombiners.SigClip.grow) | The type of the None singleton. |
+| [maxiters](#imcombiners.SigClip.maxiters) | int([x]) -> integer |
+| [maxrej](#imcombiners.SigClip.maxrej) | The type of the None singleton. |
+| [nkeep](#imcombiners.SigClip.nkeep) | int([x]) -> integer |
+| [revert_on_nkeep](#imcombiners.SigClip.revert_on_nkeep) | Returns True when the argument is true, False otherwise. |
+| [sigma](#imcombiners.SigClip.sigma) | Built-in immutable sequence. |
+
+## Methods
+
+| Name | Description |
+| --- | --- |
+| [apply](#imcombiners.SigClip.apply) | Apply SigClip to an image stack. |
+
+### apply { #imcombiners.SigClip.apply }
+
+```python
+SigClip.apply(arr, mask=None, *, validate=True)
+```
+
+Apply SigClip to an image stack.
+
+#### Parameters {.doc-section .doc-section-parameters}
+
+<code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *spatial))]{.parameter-annotation}</code>
+
+:   Image stack. Inputs with more than 3 dimensions are flattened internally; output shapes match the trailing spatial dimensions of the input.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Input mask; `True` means already masked. Must have the same shape as `arr` before any internal flattening.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, validate inputs before calling the kernel.
+
+#### Returns {.doc-section .doc-section-returns}
+
+<code>[]{.parameter-name} [:]{.parameter-annotation-sep} [mask_rej, std, low, upp, nit, output_flags : tuple of ndarray]{.parameter-annotation}</code>
+
+:   Rejection mask and diagnostics from :func:`imcombiners.kernels.sigclip`. `std` is the per-pixel spread used by sigma/CCD clipping and `None` for rejection algorithms without a spread diagnostic.

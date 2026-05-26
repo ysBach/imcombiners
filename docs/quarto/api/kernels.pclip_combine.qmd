@@ -1,0 +1,16 @@
+# kernels.pclip_combine { #imcombiners.kernels.pclip_combine }
+
+```python
+kernels.pclip_combine(
+    arr,
+    *,
+    mask=None,
+    combine,
+    frac=-0.5,
+    sigma=3.0,
+    nkeep=1,
+    validate=True,
+)
+```
+
+Return an output-only pclip-rejected mean or median.

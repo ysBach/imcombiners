@@ -1,0 +1,23 @@
+# kernels.summation { #imcombiners.kernels.summation }
+
+```python
+kernels.summation(arr, *, validate=True)
+```
+
+Return the NaN-aware sum along the stack axis.
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *spatial))]{.parameter-annotation}</code>
+
+:   Image stack. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Integer inputs are promoted to the package's floating workspace when `validate` is `True`. Inputs with more than 3 dimensions are flattened internally; output shapes match the trailing spatial dimensions of the input.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, check dimensionality and normalize dtype/contiguity before entering the Rust kernel. If `False`, callers must provide inputs that satisfy the compiled kernel assumptions.
+
+## Returns {.doc-section .doc-section-returns}
+
+<code>[**sum**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
+
+:   Per-pixel sum of finite values. All-NaN output elements return `NaN`.

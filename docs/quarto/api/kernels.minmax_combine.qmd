@@ -1,0 +1,15 @@
+# kernels.minmax_combine { #imcombiners.kernels.minmax_combine }
+
+```python
+kernels.minmax_combine(
+    arr,
+    *,
+    mask=None,
+    combine,
+    n_min=1,
+    n_max=1,
+    validate=True,
+)
+```
+
+Return an output-only minmax-rejected mean or median.

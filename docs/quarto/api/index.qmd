@@ -1,0 +1,67 @@
+# Function reference {.doc .doc-index}
+
+## 1 Pipeline API
+
+Stateful Combiner object and rejection objects.
+
+| | |
+| --- | --- |
+| [Combiner](Combiner.qmd#imcombiners.Combiner) | Stateful pipeline holder for `(scale/zero, reject, combine)` workflows. |
+| [SigClip](SigClip.qmd#imcombiners.SigClip) | Iterative sigma-clipping rejection. |
+| [CcdClip](CcdClip.qmd#imcombiners.CcdClip) | CCD noise-model clipping. |
+| [LinearClip](LinearClip.qmd#imcombiners.LinearClip) | Center-relative linear clipping. |
+| [MinMaxClip](MinMaxClip.qmd#imcombiners.MinMaxClip) | Reject the smallest and largest unmasked values at each pixel. |
+| [PClip](PClip.qmd#imcombiners.PClip) | IRAF-style percentile clipping. |
+| [Rejector](Rejector.qmd#imcombiners.Rejector) | Base class for rejection objects. |
+| [SampleFlags](SampleFlags.qmd#imcombiners.SampleFlags) | Per-sample rejection/provenance flags. |
+| [OutputFlags](OutputFlags.qmd#imcombiners.OutputFlags) | Per-output rejection status flags. |
+| [resolve_zero_scale](resolve_zero_scale.qmd#imcombiners.resolve_zero_scale) | Resolve a numeric, string, or callable zero/scale input. |
+
+## 2 Kernel API
+
+Advanced one-operation primitives for custom pipeline layers.
+
+| | |
+| --- | --- |
+| [kernels.mean](kernels.mean.qmd#imcombiners.kernels.mean) | Return the NaN-aware mean along the stack axis. |
+| [kernels.median](kernels.median.qmd#imcombiners.kernels.median) | Return the NaN-aware median along the stack axis. |
+| [kernels.lmedian](kernels.lmedian.qmd#imcombiners.kernels.lmedian) | IRAF-style lower median along the stack axis. |
+| [kernels.summation](kernels.summation.qmd#imcombiners.kernels.summation) | Return the NaN-aware sum along the stack axis. |
+| [kernels.minimum](kernels.minimum.qmd#imcombiners.kernels.minimum) | Return the NaN-aware minimum along the stack axis. |
+| [kernels.maximum](kernels.maximum.qmd#imcombiners.kernels.maximum) | Return the NaN-aware maximum along the stack axis. |
+| [kernels.variance](kernels.variance.qmd#imcombiners.kernels.variance) | Return the NaN-aware variance along the stack axis. |
+| [kernels.weighted_average](kernels.weighted_average.qmd#imcombiners.kernels.weighted_average) | Return the NaN-aware weighted average along the stack axis. |
+| [kernels.grow_mask](kernels.grow_mask.qmd#imcombiners.kernels.grow_mask) | Dilate a stack mask over spatial axes by an exact Euclidean radius. |
+| [kernels.sigclip](kernels.sigclip.qmd#imcombiners.kernels.sigclip) | Sigma-clipping rejection. |
+| [kernels.sigclip_mask](kernels.sigclip_mask.qmd#imcombiners.kernels.sigclip_mask) | Return only the sigma-clipping rejection mask. |
+| [kernels.sigclip_combine](kernels.sigclip_combine.qmd#imcombiners.kernels.sigclip_combine) | Return an output-only sigma-clipped mean or median. |
+| [kernels.ccdclip](kernels.ccdclip.qmd#imcombiners.kernels.ccdclip) | CCD noise-model clipping. |
+| [kernels.ccdclip_mask](kernels.ccdclip_mask.qmd#imcombiners.kernels.ccdclip_mask) | Return only the CCD-clipping rejection mask. |
+| [kernels.ccdclip_combine](kernels.ccdclip_combine.qmd#imcombiners.kernels.ccdclip_combine) | Return an output-only CCD-clipped mean or median. |
+| [kernels.linearclip](kernels.linearclip.qmd#imcombiners.kernels.linearclip) | Center-relative linear clipping (`low + low_scale * center <= value <= upp + upp_scale * center`). |
+| [kernels.minmax](kernels.minmax.qmd#imcombiners.kernels.minmax) | Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. Single-pass. |
+| [kernels.minmax_mask](kernels.minmax_mask.qmd#imcombiners.kernels.minmax_mask) | Return only the minmax rejection mask. |
+| [kernels.minmax_combine](kernels.minmax_combine.qmd#imcombiners.kernels.minmax_combine) | Return an output-only minmax-rejected mean or median. |
+| [kernels.pclip](kernels.pclip.qmd#imcombiners.kernels.pclip) | IRAF-style percentile clipping at each pixel. |
+| [kernels.pclip_mask](kernels.pclip_mask.qmd#imcombiners.kernels.pclip_mask) | Return only the IRAF-style pclip rejection mask. |
+| [kernels.pclip_combine](kernels.pclip_combine.qmd#imcombiners.kernels.pclip_combine) | Return an output-only pclip-rejected mean or median. |
+
+## 3 Compatibility API
+
+IRAF-style compact wrapper.
+
+| | |
+| --- | --- |
+| [ndcombine](ndcombine.qmd#imcombiners.ndcombine) | Combine an image stack with optional normalization and rejection. |
+| [place_into_padded](place_into_padded.qmd#imcombiners.place_into_padded) | Place N-D arrays into a padded stack using integer offsets. |
+
+## 4 Parallel Controls
+
+Runtime controls for Rayon worker count and serial/parallel cutoff.
+
+| | |
+| --- | --- |
+| [get_rayon_num_threads](get_rayon_num_threads.qmd#imcombiners.get_rayon_num_threads) | Return the size of Rayon global worker pool. |
+| [set_rayon_num_threads](set_rayon_num_threads.qmd#imcombiners.set_rayon_num_threads) | Set the Rayon global worker-pool size. |
+| [get_parallel_threshold](get_parallel_threshold.qmd#imcombiners.get_parallel_threshold) | Return the output-element threshold where kernels switch to Rayon. |
+| [set_parallel_threshold](set_parallel_threshold.qmd#imcombiners.set_parallel_threshold) | Set the output-element threshold where kernels switch to Rayon. |

@@ -1,0 +1,133 @@
+# CcdClip { #imcombiners.CcdClip }
+
+```python
+CcdClip(
+    sigma=(3.0, 3.0),
+    maxiters=5,
+    cenfunc='median',
+    clip_cen=None,
+    ddof=0,
+    nkeep=1,
+    maxrej=None,
+    revert_on_nkeep=True,
+    rdnoise=0.0,
+    gain=1.0,
+    snoise=0.0,
+    scale_ref=1.0,
+    zero_ref=0.0,
+    grow=None,
+)
+```
+
+CCD noise-model clipping.
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**sigma**]{.parameter-name} [:]{.parameter-annotation-sep} [float or tuple of float]{.parameter-annotation} [ = ]{.parameter-default-sep} [(3.0, 3.0)]{.parameter-default}</code>
+
+:   Clipping threshold in units of the per-pixel std. A scalar applies the same value to both tails; a 2-tuple ``(sigma_lower, sigma_upper)`` clips asymmetrically.
+
+<code>[**maxiters**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [5]{.parameter-default}</code>
+
+:   Maximum number of clipping iterations per pixel.
+
+<code>[**ddof**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [0]{.parameter-default}</code>
+
+:   Delta degrees of freedom for the per-pixel std.
+
+<code>[**nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Minimum number of unmasked values to preserve at each pixel. An iteration that would drop below this count is reverted in full. The default, `1`, prevents clipping from rejecting every finite sample in a per-output stack. Set `0` only when all samples may be rejected.
+
+<code>[**maxrej**]{.parameter-name} [:]{.parameter-annotation-sep} [int or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Maximum number of values that may be rejected at each pixel. `None` means no limit.
+
+<code>[**cenfunc**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+
+:   Center estimator used each iteration. `lmedian` accepts the alias `lmed` and uses the lower of the two middle samples for even valid counts.
+
+<code>[**clip_cen**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+
+:   Center used when computing the spread for iterative rejection. `None` uses the same center as `cenfunc`; `lmedian` also accepts `lmed`.
+
+<code>[**revert_on_nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, an iteration that would leave fewer than `nkeep` usable samples at a pixel is reverted in full for that pixel. Input masks, threshold masks, and non-finite samples remain excluded. The default is `True`. If `False`, clipping is strict and may leave fewer than `nkeep` samples.
+
+<code>[**rdnoise**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+
+:   Read noise in electrons.
+
+<code>[**gain**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1.0]{.parameter-default}</code>
+
+:   CCD gain in electrons per DN. Rejection is evaluated on gain-corrected values equivalent to ``arr / gain`` without requiring callers to pre-divide the input stack.
+
+<code>[**snoise**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+
+:   Sky-noise coefficient. Adds a Poisson-like contribution scaled by the local count level.
+
+<code>[**scale_ref**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1.0]{.parameter-default}</code>
+
+:   Reference scale factor. Typically the inverse of the exposure-time normalization applied during reduction.
+
+<code>[**zero_ref**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+
+:   Reference zero-point offset. Accounts for a known DC bias that shifts the effective noise level.
+
+<code>[**grow**]{.parameter-name} [:]{.parameter-annotation-sep} [float or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Optional radius in pixels used to grow `mask_rej` spatially after rejection. Axis 0 is the stack axis and is never grown across. `None` disables growth and skips the extra calculation.
+
+## Attributes
+
+| Name | Description |
+| --- | --- |
+| [cenfunc](#imcombiners.CcdClip.cenfunc) | str(object='') -> str |
+| [clip_cen](#imcombiners.CcdClip.clip_cen) | The type of the None singleton. |
+| [ddof](#imcombiners.CcdClip.ddof) | int([x]) -> integer |
+| [gain](#imcombiners.CcdClip.gain) | Convert a string or number to a floating-point number, if possible. |
+| [grow](#imcombiners.CcdClip.grow) | The type of the None singleton. |
+| [maxiters](#imcombiners.CcdClip.maxiters) | int([x]) -> integer |
+| [maxrej](#imcombiners.CcdClip.maxrej) | The type of the None singleton. |
+| [nkeep](#imcombiners.CcdClip.nkeep) | int([x]) -> integer |
+| [rdnoise](#imcombiners.CcdClip.rdnoise) | Convert a string or number to a floating-point number, if possible. |
+| [revert_on_nkeep](#imcombiners.CcdClip.revert_on_nkeep) | Returns True when the argument is true, False otherwise. |
+| [scale_ref](#imcombiners.CcdClip.scale_ref) | Convert a string or number to a floating-point number, if possible. |
+| [sigma](#imcombiners.CcdClip.sigma) | Built-in immutable sequence. |
+| [snoise](#imcombiners.CcdClip.snoise) | Convert a string or number to a floating-point number, if possible. |
+| [zero_ref](#imcombiners.CcdClip.zero_ref) | Convert a string or number to a floating-point number, if possible. |
+
+## Methods
+
+| Name | Description |
+| --- | --- |
+| [apply](#imcombiners.CcdClip.apply) | Apply CcdClip to an image stack. |
+
+### apply { #imcombiners.CcdClip.apply }
+
+```python
+CcdClip.apply(arr, mask=None, *, validate=True)
+```
+
+Apply CcdClip to an image stack.
+
+#### Parameters {.doc-section .doc-section-parameters}
+
+<code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *spatial))]{.parameter-annotation}</code>
+
+:   Image stack. Inputs with more than 3 dimensions are flattened internally; output shapes match the trailing spatial dimensions of the input.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Input mask; `True` means already masked. Must have the same shape as `arr` before any internal flattening.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, validate inputs before calling the kernel.
+
+#### Returns {.doc-section .doc-section-returns}
+
+<code>[]{.parameter-name} [:]{.parameter-annotation-sep} [mask_rej, std, low, upp, nit, output_flags : tuple of ndarray]{.parameter-annotation}</code>
+
+:   Rejection mask and diagnostics from :func:`imcombiners.kernels.ccdclip`. `std` is the per-pixel spread used by sigma/CCD clipping and `None` for rejection algorithms without a spread diagnostic.
