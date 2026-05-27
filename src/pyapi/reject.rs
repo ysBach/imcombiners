@@ -5,7 +5,10 @@
 //! is a smell that we explicitly avoid here (it hides the type system and lets
 //! irrelevant kwargs through silently).
 
-use numpy::{IntoPyArray, PyArray3, PyArrayMethods, PyReadonlyArray3, PyReadonlyArrayDyn};
+use numpy::{
+    IntoPyArray, PyArray1, PyArray3, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray3,
+    PyReadonlyArrayDyn,
+};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
@@ -17,9 +20,9 @@ use crate::kernel::reject::{
     minmax_mask as k_minmax_mask, minmax_mean as k_minmax_mean, minmax_median as k_minmax_median,
     pclip as k_pclip, pclip_mask as k_pclip_mask, pclip_mean as k_pclip_mean,
     pclip_median as k_pclip_median, sigclip as k_sigclip, sigclip_mask as k_sigclip_mask,
-    sigclip_mean as k_sigclip_mean, sigclip_median as k_sigclip_median,
-    sigclip_restored_flags as k_sigclip_restored_flags, CenFunc, ClipCenter, LinearClipParams,
-    SigClipParams,
+    sigclip_mask_1d as k_sigclip_mask_1d, sigclip_mean as k_sigclip_mean,
+    sigclip_median as k_sigclip_median, sigclip_restored_flags as k_sigclip_restored_flags,
+    CenFunc, ClipCenter, LinearClipParams, SigClipParams,
 };
 
 use super::support::reject_to_tuple;
@@ -34,6 +37,7 @@ pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(minmax, m)?)?;
     m.add_function(wrap_pyfunction!(pclip, m)?)?;
     m.add_function(wrap_pyfunction!(sigclip_mask, m)?)?;
+    m.add_function(wrap_pyfunction!(sigclip_mask_1d, m)?)?;
     m.add_function(wrap_pyfunction!(sigclip_mean, m)?)?;
     m.add_function(wrap_pyfunction!(sigclip_median, m)?)?;
     m.add_function(wrap_pyfunction!(ccdclip_mask, m)?)?;
@@ -113,6 +117,38 @@ fn run_sigclip_mask_kind<'py>(
     } else {
         Err(PyTypeError::new_err(
             "arr must be a 3-D float32 or float64 NumPy array",
+        ))
+    }
+}
+
+fn run_sigclip_mask_1d_kind<'py>(
+    py: Python<'py>,
+    values: &Bound<'py, PyAny>,
+    mask: Option<PyReadonlyArray1<'py, bool>>,
+    params: SigClipParams,
+    validate: bool,
+) -> PyResult<Bound<'py, PyAny>> {
+    if let Ok(a) = values.cast::<PyArray1<f32>>() {
+        let a = a.readonly();
+        let values = a.as_slice().unwrap();
+        let mask_slice = mask.as_ref().map(|m| m.as_slice().unwrap());
+        if validate {
+            validate_1d_inputs(values.len(), mask_slice.map(<[bool]>::len))?;
+        }
+        let out = k_sigclip_mask_1d::<f32>(values, mask_slice, &params);
+        Ok(out.into_pyarray(py).into_any())
+    } else if let Ok(a) = values.cast::<PyArray1<f64>>() {
+        let a = a.readonly();
+        let values = a.as_slice().unwrap();
+        let mask_slice = mask.as_ref().map(|m| m.as_slice().unwrap());
+        if validate {
+            validate_1d_inputs(values.len(), mask_slice.map(<[bool]>::len))?;
+        }
+        let out = k_sigclip_mask_1d::<f64>(values, mask_slice, &params);
+        Ok(out.into_pyarray(py).into_any())
+    } else {
+        Err(PyTypeError::new_err(
+            "values must be a 1-D float32 or float64 NumPy array",
         ))
     }
 }
@@ -512,6 +548,59 @@ fn sigclip_mask<'py>(
         rejection_gain: 1.0,
     };
     run_sigclip_mask_kind(py, arr, mask, params, validate)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[pyfunction]
+#[pyo3(signature = (
+    values,
+    *,
+    mask = None,
+    sigma_lower = 3.0,
+    sigma_upper = 3.0,
+    maxiters = 5,
+    ddof = 0,
+    nkeep = 1,
+    maxrej = None,
+    cenfunc = "median",
+    clip_cen = "mean",
+    revert_on_nkeep = true,
+    validate = true,
+))]
+fn sigclip_mask_1d<'py>(
+    py: Python<'py>,
+    values: &Bound<'py, PyAny>,
+    mask: Option<PyReadonlyArray1<'py, bool>>,
+    sigma_lower: f64,
+    sigma_upper: f64,
+    maxiters: usize,
+    ddof: usize,
+    nkeep: usize,
+    maxrej: Option<usize>,
+    cenfunc: &str,
+    clip_cen: &str,
+    revert_on_nkeep: bool,
+    validate: bool,
+) -> PyResult<Bound<'py, PyAny>> {
+    let n = values_len_1d(values)?;
+    let params = SigClipParams {
+        sigma_lower,
+        sigma_upper,
+        maxiters,
+        ddof,
+        nkeep,
+        maxrej: maxrej.unwrap_or(n),
+        cenfunc: parse_cenfunc(cenfunc)?,
+        clip_cen: parse_clip_center(clip_cen)?,
+        revert_on_nkeep,
+        ccdclip: false,
+        rdnoise_ref: 0.0,
+        snoise_ref: 0.0,
+        scale_ref: 1.0,
+        zero_ref: 0.0,
+        rejection_gain: 1.0,
+    };
+    run_sigclip_mask_1d_kind(py, values, mask, params, validate)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1406,6 +1495,18 @@ fn stack_size(arr: &Bound<'_, PyAny>) -> PyResult<usize> {
     }
 }
 
+fn values_len_1d(values: &Bound<'_, PyAny>) -> PyResult<usize> {
+    if let Ok(a) = values.cast::<PyArray1<f32>>() {
+        Ok(a.readonly().as_array().shape()[0])
+    } else if let Ok(a) = values.cast::<PyArray1<f64>>() {
+        Ok(a.readonly().as_array().shape()[0])
+    } else {
+        Err(PyTypeError::new_err(
+            "values must be a 1-D float32 or float64 NumPy array",
+        ))
+    }
+}
+
 fn validate_stack_size(n: usize) -> PyResult<usize> {
     if n == 0 {
         Err(PyValueError::new_err(
@@ -1414,6 +1515,18 @@ fn validate_stack_size(n: usize) -> PyResult<usize> {
     } else {
         Ok(n)
     }
+}
+
+fn validate_1d_inputs(values_len: usize, mask_len: Option<usize>) -> PyResult<()> {
+    validate_stack_size(values_len)?;
+    if let Some(mask_len) = mask_len {
+        if mask_len != values_len {
+            return Err(PyValueError::new_err(format!(
+                "mask length {mask_len} does not match values length {values_len}",
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_reject_inputs(arr_shape: &[usize], mask_shape: Option<&[usize]>) -> PyResult<()> {

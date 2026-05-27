@@ -174,6 +174,38 @@ def validate_stack(arr: NDArray) -> NDArray:
     return np.ascontiguousarray(arr)
 
 
+def validate_values_1d(values: NDArray) -> NDArray:
+    """Validate and normalize a 1-D vector for vector rejection kernels.
+
+    Parameters
+    ----------
+    values : ndarray
+        Candidate value vector. Must have one dimension and at least one
+        element. Integer inputs follow the same floating-workspace promotion
+        rules as `validate_stack()`.
+
+    Returns
+    -------
+    values : ndarray
+        C-contiguous 1-D `float32` or `float64` vector.
+    """
+    values = np.asarray(values)
+    if values.ndim != 1:
+        raise ValueError(f"values must be 1-D; got shape {values.shape}")
+    if values.shape[0] == 0:
+        raise ValueError("values must contain at least one sample")
+    if values.dtype in _PROMOTE_TO_FLOAT32_DTYPES:
+        return np.ascontiguousarray(values, dtype=np.float32)
+    if values.dtype in _PROMOTE_TO_FLOAT64_DTYPES:
+        return np.ascontiguousarray(values, dtype=np.float64)
+    if values.dtype not in _FLOAT_DTYPES:
+        raise TypeError(
+            "values must be uint8, uint16, int16, int32, float32, "
+            f"or float64; got {values.dtype}"
+        )
+    return np.ascontiguousarray(values)
+
+
 def validate_lmedian_stack(arr: NDArray) -> NDArray:
     """Validate a pure lower-median stack while preserving integer dtypes.
 

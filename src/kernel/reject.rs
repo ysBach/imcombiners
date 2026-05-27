@@ -29,6 +29,32 @@ fn cmp_pair_t<T: Float>(a: &(T, usize), b: &(T, usize)) -> Ordering {
 }
 
 #[inline]
+fn median_f64(buf: &mut [f64]) -> f64 {
+    let n = buf.len();
+    let mid = n / 2;
+    if n % 2 == 1 {
+        let (_, value, _) = buf.select_nth_unstable_by(mid, cmp_f64);
+        *value
+    } else {
+        let (_, upper, _) = buf.select_nth_unstable_by(mid, cmp_f64);
+        let upper = *upper;
+        let lower = buf[..mid]
+            .iter()
+            .copied()
+            .max_by(|a, b| a.total_cmp(b))
+            .expect("even median lower partition is non-empty");
+        (lower + upper) / 2.0
+    }
+}
+
+#[inline]
+fn lower_median_f64(buf: &mut [f64]) -> f64 {
+    let idx = (buf.len() - 1) / 2;
+    let (_, value, _) = buf.select_nth_unstable_by(idx, cmp_f64);
+    *value
+}
+
+#[inline]
 fn debug_assert_mask_covers_nonfinite<T: Float>(vals: &[T], mask: &[bool]) {
     debug_assert_eq!(vals.len(), mask.len());
     debug_assert!(
@@ -533,14 +559,7 @@ fn col_nanmedian<T: Float>(vals: &[T], mask: &[bool], buf: &mut Vec<f64>) -> T {
     if n == 0 {
         return T::nan();
     }
-    buf.sort_by(cmp_f64);
-    let mid = n / 2;
-    let m = if n % 2 == 1 {
-        buf[mid]
-    } else {
-        (buf[mid - 1] + buf[mid]) / 2.0
-    };
-    T::from_f64(m)
+    T::from_f64(median_f64(buf))
 }
 
 #[inline]
@@ -556,8 +575,7 @@ fn col_nanlmedian<T: Float>(vals: &[T], mask: &[bool], buf: &mut Vec<f64>) -> T 
     if n == 0 {
         return T::nan();
     }
-    buf.sort_by(cmp_f64);
-    T::from_f64(buf[(n - 1) / 2])
+    T::from_f64(lower_median_f64(buf))
 }
 
 #[inline]
@@ -631,14 +649,7 @@ fn final_median<T: Float>(vals: &[T], mask: &[bool], buf: &mut Vec<f64>) -> T {
     if n == 0 {
         return T::nan();
     }
-    buf.sort_by(cmp_f64);
-    let mid = n / 2;
-    let value = if n % 2 == 1 {
-        buf[mid]
-    } else {
-        (buf[mid - 1] + buf[mid]) / 2.0
-    };
-    T::from_f64(value)
+    T::from_f64(median_f64(buf))
 }
 
 #[inline]
@@ -891,6 +902,35 @@ pub fn sigclip_mask<T: Float>(
     p: &SigClipParams,
 ) -> Array3<bool> {
     sigclip_impl(arr, mask_in, p, false).mask
+}
+
+pub fn sigclip_mask_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    p: &SigClipParams,
+) -> Vec<bool> {
+    let n = values.len();
+    let no_mask;
+    let mask = if let Some(mask) = mask_in {
+        mask
+    } else {
+        no_mask = vec![false; n];
+        &no_mask
+    };
+    let mut out_mask = vec![false; n];
+    let mut buf = Vec::<f64>::with_capacity(n);
+    let mut scratch = SigClipPixelScratch::new();
+    sigclip_pixel(
+        values,
+        mask,
+        p,
+        false,
+        &mut buf,
+        &mut out_mask,
+        None,
+        &mut scratch,
+    );
+    out_mask
 }
 
 struct SigClipCombineScratch<T: Float> {

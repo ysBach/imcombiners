@@ -190,6 +190,27 @@ def test_sigclip_returns_pixel_std_diagnostic():
     np.testing.assert_allclose(std[0, 0], np.std([1.0, 2.0, 3.0], ddof=0))
 
 
+def test_sigclip_mask_1d_matches_single_column_sigclip_mask():
+    values = np.array(
+        [np.nan, 100.0, 101.0, 99.5, 500.0, 98.5, 100.5],
+        dtype=np.float64,
+    )
+    kwargs = {
+        "sigma": (3.0, 3.0),
+        "maxiters": 5,
+        "ddof": 0,
+        "nkeep": 0,
+        "cenfunc": "median",
+        "clip_cen": None,
+    }
+
+    got = kernels.sigclip_mask_1d(values, **kwargs)
+    expected = kernels.sigclip_mask(values[:, None], **kwargs)[:, 0]
+
+    assert got.shape == values.shape
+    np.testing.assert_array_equal(got, expected)
+
+
 def test_sigclip_lower_median_center_differs_from_standard_median_for_even_stack():
     arr = np.array([8.0, 10.0, 10.6, 40.0], dtype=np.float32).reshape(4, 1, 1)
 

@@ -39,6 +39,7 @@ from ._validation import (
     validate_lmedian_stack,
     validate_mask,
     validate_stack,
+    validate_values_1d,
     validate_weights,
 )
 
@@ -55,6 +56,7 @@ __all__ = [
     # Reject
     "sigclip",
     "sigclip_mask",
+    "sigclip_mask_1d",
     "sigclip_combine",
     "ccdclip",
     "ccdclip_mask",
@@ -379,6 +381,42 @@ def sigclip_mask(
         validate=bool(validate),
     ).reshape(orig_shape)
     return _grow_rejection_mask_only(mask_rej, grow, validate=validate)
+
+
+def sigclip_mask_1d(
+    values: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    sigma: float | tuple[float, float] = (3.0, 3.0),
+    maxiters: int = 5,
+    ddof: int = 0,
+    nkeep: int = 1,
+    maxrej: int | None = None,
+    cenfunc: str = "median",
+    clip_cen: str | None = None,
+    revert_on_nkeep: bool = True,
+    validate: bool = True,
+) -> np.ndarray:
+    """Return only the sigma-clipping rejection mask for a 1-D value vector."""
+    if validate:
+        values = validate_values_1d(values)
+        mask = validate_mask(mask, values.shape)
+    sigma_lower, sigma_upper = _sigma_pair(sigma)
+    _clip_cen = cenfunc if clip_cen is None else clip_cen
+    return _core.sigclip_mask_1d(
+        values,
+        mask=mask,
+        sigma_lower=sigma_lower,
+        sigma_upper=sigma_upper,
+        maxiters=int(maxiters),
+        ddof=int(ddof),
+        nkeep=int(nkeep),
+        maxrej=maxrej,
+        cenfunc=str(cenfunc),
+        clip_cen=str(_clip_cen),
+        revert_on_nkeep=bool(revert_on_nkeep),
+        validate=bool(validate),
+    )
 
 
 def _sigclip_restored_flags(
