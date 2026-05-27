@@ -190,6 +190,109 @@ def test_sigclip_returns_pixel_std_diagnostic():
     np.testing.assert_allclose(std[0, 0], np.std([1.0, 2.0, 3.0], ddof=0))
 
 
+def test_sigclip_mad_stdfunc_uses_scaled_median_absolute_deviation():
+    arr = np.array([8.0, 9.0, 10.0, 11.0, 12.0, 100.0], dtype=np.float32).reshape(
+        6, 1, 1
+    )
+
+    mask, std, low, upp, nit, output_flags = kernels.sigclip(
+        arr,
+        sigma=(10.0, 3.0),
+        maxiters=1,
+        ddof=0,
+        nkeep=0,
+        cenfunc="median",
+        clip_cen="median",
+        stdfunc="mad",
+    )
+
+    mad_sigma = 1.4826 * np.median(np.abs(arr[:, 0, 0] - np.median(arr[:, 0, 0])))
+    assert mask[:, 0, 0].tolist() == [False, False, False, False, False, True]
+    np.testing.assert_allclose(std[0, 0], mad_sigma, rtol=1e-6)
+    np.testing.assert_allclose(low[0, 0], 8.0)
+    np.testing.assert_allclose(upp[0, 0], 12.0)
+    assert nit[0, 0] == 2
+    assert output_flags[0, 0] == 2
+
+
+def test_sigclip_mad_stdfunc_applies_ddof_scale_to_sigma_estimate():
+    arr = np.array([8.0, 9.0, 10.0, 11.0, 12.0, 100.0], dtype=np.float32).reshape(
+        6, 1, 1
+    )
+
+    _, std, *_ = kernels.sigclip(
+        arr,
+        sigma=100.0,
+        maxiters=1,
+        ddof=1,
+        nkeep=0,
+        cenfunc="median",
+        clip_cen="median",
+        stdfunc="mad",
+    )
+
+    base = 1.4826 * np.median(np.abs(arr[:, 0, 0] - np.median(arr[:, 0, 0])))
+    expected = base * np.sqrt(6.0 / 5.0)
+    np.testing.assert_allclose(std[0, 0], expected, rtol=1e-6)
+
+
+def test_sigclip_rejects_unknown_stdfunc():
+    arr = np.array([1.0, 2.0, 3.0], dtype=np.float32).reshape(3, 1, 1)
+
+    with pytest.raises(ValueError, match="unknown stdfunc"):
+        kernels.sigclip(arr, stdfunc="biweight")
+
+
+def test_sigclip_rejects_negative_sigma_threshold():
+    arr = np.array([1.0, 2.0, 3.0], dtype=np.float32).reshape(3, 1, 1)
+
+    with pytest.raises(ValueError, match="sigma thresholds"):
+        kernels.sigclip(arr, sigma=(-1.0, 3.0))
+
+
+def test_ccdclip_rejects_negative_sigma_threshold():
+    arr = np.array([1.0, 2.0, 3.0], dtype=np.float32).reshape(3, 1, 1)
+
+    with pytest.raises(ValueError, match="sigma thresholds"):
+        kernels.ccdclip(arr, sigma=(3.0, -1.0))
+
+
+def test_sigclip_combine_1d_accepts_mad_stdfunc():
+    values = np.array([8.0, 9.0, 10.0, 11.0, 12.0, 100.0], dtype=np.float32)
+
+    out = kernels.sigclip_combine_1d(
+        values,
+        combine="mean",
+        sigma=(10.0, 3.0),
+        maxiters=1,
+        nkeep=0,
+        cenfunc="median",
+        clip_cen="median",
+        stdfunc="mad",
+    )
+
+    np.testing.assert_allclose(out, 10.0)
+
+
+def test_sigclip_rejector_accepts_mad_stdfunc():
+    arr = np.array([8.0, 9.0, 10.0, 11.0, 12.0, 100.0], dtype=np.float32).reshape(
+        6, 1, 1
+    )
+
+    rejector = SigClip(
+        sigma=(10.0, 3.0),
+        maxiters=1,
+        nkeep=0,
+        cenfunc="median",
+        clip_cen="median",
+        stdfunc="mad",
+    )
+
+    mask, *_ = rejector.apply(arr)
+
+    assert mask[:, 0, 0].tolist() == [False, False, False, False, False, True]
+
+
 def test_sigclip_mask_1d_matches_single_column_sigclip_mask():
     values = np.array(
         [np.nan, 100.0, 101.0, 99.5, 500.0, 98.5, 100.5],

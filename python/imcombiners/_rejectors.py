@@ -56,6 +56,7 @@ class SigClip(Rejector):
     maxiters: int = 5
     cenfunc: str = "median"
     clip_cen: str | None = None
+    stdfunc: str = "std"
     ddof: int = 0
     nkeep: int = 1
     maxrej: int | None = None
@@ -91,6 +92,7 @@ class SigClip(Rejector):
             maxrej=self.maxrej,
             cenfunc=self.cenfunc,
             clip_cen=self.clip_cen,
+            stdfunc=self.stdfunc,
             revert_on_nkeep=self.revert_on_nkeep,
             grow=self.grow,
             validate=validate,

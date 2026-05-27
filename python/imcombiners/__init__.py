@@ -44,6 +44,7 @@ from ._rejectors import (
 from ._validation import resolve_zero_scale
 from .kernels import (
     ccdclip,
+    get_minmax_1d_parallel_threshold,
     get_parallel_threshold,
     get_rayon_num_threads,
     grow_mask,
@@ -55,6 +56,7 @@ from .kernels import (
     minimum,
     minmax,
     pclip,
+    set_minmax_1d_parallel_threshold,
     set_parallel_threshold,
     set_rayon_num_threads,
     sigclip,
@@ -103,6 +105,8 @@ __all__ = [
     "set_rayon_num_threads",
     "get_parallel_threshold",
     "set_parallel_threshold",
+    "get_minmax_1d_parallel_threshold",
+    "set_minmax_1d_parallel_threshold",
     "__version__",
 ]
 

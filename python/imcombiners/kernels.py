@@ -43,6 +43,15 @@ from ._validation import (
     validate_weights,
 )
 
+_LMEDIAN_1D_DTYPES = (
+    np.uint8,
+    np.uint16,
+    np.int16,
+    np.int32,
+    np.float32,
+    np.float64,
+)
+
 __all__ = [
     # Combine
     "mean",
@@ -53,27 +62,49 @@ __all__ = [
     "maximum",
     "variance",
     "weighted_average",
+    "mean_1d",
+    "median_1d",
+    "lmedian_1d",
+    "sum_1d",
+    "min_1d",
+    "max_1d",
+    "var_1d",
+    "wvg_1d",
     # Reject
     "sigclip",
+    "sigclip_1d",
     "sigclip_mask",
     "sigclip_mask_1d",
     "sigclip_combine",
+    "sigclip_combine_1d",
     "ccdclip",
+    "ccdclip_1d",
     "ccdclip_mask",
+    "ccdclip_mask_1d",
     "ccdclip_combine",
+    "ccdclip_combine_1d",
     "linearclip",
+    "linearclip_1d",
     "minmax",
+    "minmax_1d",
     "minmax_mask",
+    "minmax_mask_1d",
     "minmax_combine",
+    "minmax_combine_1d",
     "pclip",
+    "pclip_1d",
     "pclip_mask",
+    "pclip_mask_1d",
     "pclip_combine",
+    "pclip_combine_1d",
     "grow_mask",
     # Parallel controls
     "get_rayon_num_threads",
     "set_rayon_num_threads",
     "get_parallel_threshold",
     "set_parallel_threshold",
+    "get_minmax_1d_parallel_threshold",
+    "set_minmax_1d_parallel_threshold",
 ]
 
 
@@ -134,6 +165,34 @@ def set_parallel_threshold(threshold: int) -> None:
     if threshold <= 0:
         raise ValueError("parallel threshold must be positive")
     _core.set_parallel_threshold(threshold)
+
+
+def get_minmax_1d_parallel_threshold() -> int:
+    """Return the vector length where 1-D min/max switch to Rayon.
+
+    This threshold is compared with ``values.size`` for `min_1d()` and
+    `max_1d()`. It is independent of `get_parallel_threshold()`, which controls
+    stack/rejection parallelism over output elements.
+    """
+    return int(_core.get_minmax_1d_parallel_threshold())
+
+
+def set_minmax_1d_parallel_threshold(threshold: int) -> None:
+    """Set the vector length where 1-D min/max switch to Rayon.
+
+    Parameters
+    ----------
+    threshold : int
+        Positive vector length. Vectors shorter than this use a serial scan;
+        vectors at or above it use Rayon chunk reductions.
+    """
+    try:
+        threshold = operator.index(threshold)
+    except TypeError as exc:
+        raise TypeError("1-D min/max parallel threshold must be an integer") from exc
+    if threshold <= 0:
+        raise ValueError("1-D min/max parallel threshold must be positive")
+    _core.set_minmax_1d_parallel_threshold(threshold)
 
 
 def grow_mask(mask: np.ndarray, grow: float, *, validate: bool = True) -> np.ndarray:
@@ -278,6 +337,125 @@ def weighted_average(
     return _core.weighted_average(arr, weights, validate=validate).reshape(trailing)
 
 
+def _prepare_1d_values(
+    values: np.ndarray, *, validate: bool, preserve_integer: bool = False
+) -> np.ndarray:
+    """Validate the public 1-D contract and return contiguous Rust input.
+
+    Most 1-D kernels share the stack kernels' floating-workspace promotion.
+    `lmedian_1d` is the exception because its integer lower-median path must
+    preserve the original dtype to match the 2-D image-stack behavior.
+    """
+    if validate and not preserve_integer:
+        return validate_values_1d(values)
+
+    values = np.asarray(values)
+    if values.ndim != 1:
+        raise ValueError(f"values must be 1-D; got shape {values.shape}")
+    if preserve_integer and values.shape[0] == 0:
+        raise ValueError("values must contain at least one sample")
+    if preserve_integer and validate and values.dtype not in _LMEDIAN_1D_DTYPES:
+        raise TypeError(
+            "values must be uint8, uint16, int16, int32, float32, "
+            f"or float64; got {values.dtype}"
+        )
+    return np.ascontiguousarray(values)
+
+
+def _prepare_1d_rejection_inputs(
+    values: np.ndarray, mask: np.ndarray | None, *, validate: bool
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Validate a public 1-D vector/mask pair for direct Rust slice kernels."""
+    values = _prepare_1d_values(values, validate=validate)
+    mask = validate_mask(mask, values.shape)
+    return values, mask
+
+
+def _scalar(value: object) -> object:
+    """Return a Python/NumPy scalar from a scalar-like result."""
+    if isinstance(value, np.ndarray):
+        return value.reshape(-1)[0]
+    return value
+
+
+def _rejection_1d_result(
+    result: RejectionResult,
+) -> tuple[np.ndarray, object, object, object, object, object]:
+    """Unwrap a stack rejection result to the 1-D public shape."""
+    mask_rej, std, low, upp, nit, output_flags = result
+    return (
+        mask_rej.reshape(-1),
+        _scalar(std),
+        _scalar(low),
+        _scalar(upp),
+        _scalar(nit),
+        _scalar(output_flags),
+    )
+
+
+def mean_1d(values: np.ndarray, *, validate: bool = True) -> object:
+    """Return the NaN-aware mean of a 1-D value vector."""
+    if not validate:
+        return _core.mean_1d(values)
+    values = _prepare_1d_values(values, validate=validate)
+    return _core.mean_1d(values)
+
+
+def median_1d(values: np.ndarray, *, validate: bool = True) -> object:
+    """Return the NaN-aware median of a 1-D value vector."""
+    if not validate:
+        return _core.median_1d(values)
+    values = _prepare_1d_values(values, validate=validate)
+    return _core.median_1d(values)
+
+
+def lmedian_1d(values: np.ndarray, *, validate: bool = True) -> object:
+    """Return the NaN-aware lower median of a 1-D value vector."""
+    values = _prepare_1d_values(values, validate=validate, preserve_integer=True)
+    if values.dtype in (np.uint8, np.uint16, np.int16, np.int32):
+        return _core.lmedian(values.reshape(-1, 1, 1))[0, 0]
+    return _core.lmedian_1d(values)
+
+
+def sum_1d(values: np.ndarray, *, validate: bool = True) -> object:
+    """Return the NaN-aware sum of a 1-D value vector."""
+    if not validate:
+        return _core.sum_1d(values)
+    values = _prepare_1d_values(values, validate=validate)
+    return _core.sum_1d(values)
+
+
+def min_1d(values: np.ndarray, *, validate: bool = True) -> object:
+    """Return the NaN-aware minimum of a 1-D value vector."""
+    if not validate:
+        return _core.min_1d(values)
+    values = _prepare_1d_values(values, validate=validate)
+    return _core.min_1d(values)
+
+
+def max_1d(values: np.ndarray, *, validate: bool = True) -> object:
+    """Return the NaN-aware maximum of a 1-D value vector."""
+    if not validate:
+        return _core.max_1d(values)
+    values = _prepare_1d_values(values, validate=validate)
+    return _core.max_1d(values)
+
+
+def var_1d(values: np.ndarray, *, ddof: int = 0, validate: bool = True) -> object:
+    """Return the NaN-aware variance of a 1-D value vector."""
+    if not validate:
+        return _core.variance_1d(values, ddof=int(ddof))
+    values = _prepare_1d_values(values, validate=validate)
+    return _core.variance_1d(values, ddof=int(ddof))
+
+
+def wvg_1d(values: np.ndarray, weights: np.ndarray, *, validate: bool = True) -> object:
+    """Return the NaN-aware weighted average of a 1-D value vector."""
+    values = _prepare_1d_values(values, validate=validate)
+    weights = validate_weights(weights, values.shape[0])
+    return _core.weighted_average_1d(values, weights)
+
+
 # ---- reject -------------------------------------------------------------------------
 
 
@@ -299,6 +477,7 @@ def sigclip(
     maxrej: int | None = None,
     cenfunc: str = "median",
     clip_cen: str | None = None,
+    stdfunc: str = "std",
     revert_on_nkeep: bool = True,
     grow: float | None = None,
     validate: bool = True,
@@ -324,6 +503,7 @@ def sigclip(
         maxrej=maxrej,
         cenfunc=str(cenfunc),
         clip_cen=str(_clip_cen),
+        stdfunc=str(stdfunc),
         revert_on_nkeep=bool(revert_on_nkeep),
         validate=bool(validate),
     )
@@ -342,6 +522,44 @@ def sigclip(
     )
 
 
+def sigclip_1d(
+    values: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    sigma: float | tuple[float, float] = (3.0, 3.0),
+    maxiters: int = 5,
+    ddof: int = 0,
+    nkeep: int = 1,
+    maxrej: int | None = None,
+    cenfunc: str = "median",
+    clip_cen: str | None = None,
+    stdfunc: str = "std",
+    revert_on_nkeep: bool = True,
+    validate: bool = True,
+) -> tuple[np.ndarray, object, object, object, object, object]:
+    """Sigma-clipping rejection for a 1-D value vector."""
+    values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    sigma_lower, sigma_upper = _sigma_pair(sigma)
+    _clip_cen = cenfunc if clip_cen is None else clip_cen
+    return _rejection_1d_result(
+        _core.sigclip_1d(
+            values,
+            mask=mask,
+            sigma_lower=sigma_lower,
+            sigma_upper=sigma_upper,
+            maxiters=int(maxiters),
+            ddof=int(ddof),
+            nkeep=int(nkeep),
+            maxrej=maxrej,
+            cenfunc=str(cenfunc),
+            clip_cen=str(_clip_cen),
+            stdfunc=str(stdfunc),
+            revert_on_nkeep=bool(revert_on_nkeep),
+            validate=False,
+        )
+    )
+
+
 def sigclip_mask(
     arr: np.ndarray,
     *,
@@ -353,6 +571,7 @@ def sigclip_mask(
     maxrej: int | None = None,
     cenfunc: str = "median",
     clip_cen: str | None = None,
+    stdfunc: str = "std",
     revert_on_nkeep: bool = True,
     grow: float | None = None,
     validate: bool = True,
@@ -377,6 +596,7 @@ def sigclip_mask(
         maxrej=maxrej,
         cenfunc=str(cenfunc),
         clip_cen=str(_clip_cen),
+        stdfunc=str(stdfunc),
         revert_on_nkeep=bool(revert_on_nkeep),
         validate=bool(validate),
     ).reshape(orig_shape)
@@ -394,13 +614,13 @@ def sigclip_mask_1d(
     maxrej: int | None = None,
     cenfunc: str = "median",
     clip_cen: str | None = None,
+    stdfunc: str = "std",
     revert_on_nkeep: bool = True,
     validate: bool = True,
 ) -> np.ndarray:
     """Return only the sigma-clipping rejection mask for a 1-D value vector."""
-    if validate:
-        values = validate_values_1d(values)
-        mask = validate_mask(mask, values.shape)
+    values = _prepare_1d_values(values, validate=validate)
+    mask = validate_mask(mask, values.shape)
     sigma_lower, sigma_upper = _sigma_pair(sigma)
     _clip_cen = cenfunc if clip_cen is None else clip_cen
     return _core.sigclip_mask_1d(
@@ -414,6 +634,7 @@ def sigclip_mask_1d(
         maxrej=maxrej,
         cenfunc=str(cenfunc),
         clip_cen=str(_clip_cen),
+        stdfunc=str(stdfunc),
         revert_on_nkeep=bool(revert_on_nkeep),
         validate=bool(validate),
     )
@@ -430,6 +651,7 @@ def _sigclip_restored_flags(
     maxrej: int | None = None,
     cenfunc: str = "median",
     clip_cen: str | None = None,
+    stdfunc: str = "std",
     revert_on_nkeep: bool = True,
     validate: bool = True,
 ) -> np.ndarray:
@@ -453,6 +675,7 @@ def _sigclip_restored_flags(
         maxrej=maxrej,
         cenfunc=str(cenfunc),
         clip_cen=str(_clip_cen),
+        stdfunc=str(stdfunc),
         revert_on_nkeep=bool(revert_on_nkeep),
         validate=bool(validate),
     ).reshape(orig_shape)
@@ -470,6 +693,7 @@ def sigclip_combine(
     maxrej: int | None = None,
     cenfunc: str = "median",
     clip_cen: str | None = None,
+    stdfunc: str = "std",
     revert_on_nkeep: bool = True,
     validate: bool = True,
 ) -> np.ndarray:
@@ -498,10 +722,54 @@ def sigclip_combine(
         maxrej=maxrej,
         cenfunc=str(cenfunc),
         clip_cen=str(_clip_cen),
+        stdfunc=str(stdfunc),
         revert_on_nkeep=bool(revert_on_nkeep),
         validate=bool(validate),
     )
     return out.reshape(trailing)
+
+
+def sigclip_combine_1d(
+    values: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    combine: str,
+    sigma: float | tuple[float, float] = (3.0, 3.0),
+    maxiters: int = 5,
+    ddof: int = 0,
+    nkeep: int = 1,
+    maxrej: int | None = None,
+    cenfunc: str = "median",
+    clip_cen: str | None = None,
+    stdfunc: str = "std",
+    revert_on_nkeep: bool = True,
+    validate: bool = True,
+) -> object:
+    """Return a 1-D sigma-clipped mean or median."""
+    cb = combine.lower()
+    if cb not in ("mean", "average", "avg", "median", "med"):
+        raise NotImplementedError("fused sigclip currently supports mean and median")
+    values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    sigma_lower, sigma_upper = _sigma_pair(sigma)
+    _clip_cen = cenfunc if clip_cen is None else clip_cen
+    kernel = (
+        _core.sigclip_median_1d if cb in ("median", "med") else _core.sigclip_mean_1d
+    )
+    return kernel(
+        values,
+        mask=mask,
+        sigma_lower=sigma_lower,
+        sigma_upper=sigma_upper,
+        maxiters=int(maxiters),
+        ddof=int(ddof),
+        nkeep=int(nkeep),
+        maxrej=maxrej,
+        cenfunc=str(cenfunc),
+        clip_cen=str(_clip_cen),
+        stdfunc=str(stdfunc),
+        revert_on_nkeep=bool(revert_on_nkeep),
+        validate=False,
+    )
 
 
 def ccdclip(
@@ -568,6 +836,52 @@ def ccdclip(
     )
 
 
+def ccdclip_1d(
+    values: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    sigma: float | tuple[float, float] = (3.0, 3.0),
+    maxiters: int = 5,
+    ddof: int = 0,
+    nkeep: int = 1,
+    maxrej: int | None = None,
+    cenfunc: str = "median",
+    clip_cen: str | None = None,
+    revert_on_nkeep: bool = True,
+    rdnoise: float = 0.0,
+    gain: float = 1.0,
+    snoise: float = 0.0,
+    scale_ref: float = 1.0,
+    zero_ref: float = 0.0,
+    validate: bool = True,
+) -> tuple[np.ndarray, object, object, object, object, object]:
+    """CCD noise-model clipping for a 1-D value vector."""
+    values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    sigma_lower, sigma_upper = _sigma_pair(sigma)
+    _clip_cen = cenfunc if clip_cen is None else clip_cen
+    return _rejection_1d_result(
+        _core.ccdclip_1d(
+            values,
+            mask=mask,
+            sigma_lower=sigma_lower,
+            sigma_upper=sigma_upper,
+            maxiters=int(maxiters),
+            ddof=int(ddof),
+            nkeep=int(nkeep),
+            maxrej=maxrej,
+            cenfunc=str(cenfunc),
+            clip_cen=str(_clip_cen),
+            revert_on_nkeep=bool(revert_on_nkeep),
+            rdnoise_ref=float(rdnoise),
+            snoise_ref=float(snoise),
+            scale_ref=float(scale_ref),
+            zero_ref=float(zero_ref),
+            gain=float(gain),
+            validate=False,
+        )
+    )
+
+
 def ccdclip_mask(
     arr: np.ndarray,
     *,
@@ -617,6 +931,50 @@ def ccdclip_mask(
         validate=bool(validate),
     ).reshape(orig_shape)
     return _grow_rejection_mask_only(mask_rej, grow, validate=validate)
+
+
+def ccdclip_mask_1d(
+    values: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    sigma: float | tuple[float, float] = (3.0, 3.0),
+    maxiters: int = 5,
+    ddof: int = 0,
+    nkeep: int = 1,
+    maxrej: int | None = None,
+    cenfunc: str = "median",
+    clip_cen: str | None = None,
+    revert_on_nkeep: bool = True,
+    rdnoise: float = 0.0,
+    gain: float = 1.0,
+    snoise: float = 0.0,
+    scale_ref: float = 1.0,
+    zero_ref: float = 0.0,
+    validate: bool = True,
+) -> np.ndarray:
+    """Return only the CCD-clipping rejection mask for a 1-D value vector."""
+    values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    sigma_lower, sigma_upper = _sigma_pair(sigma)
+    _clip_cen = cenfunc if clip_cen is None else clip_cen
+    return _core.ccdclip_mask_1d(
+        values,
+        mask=mask,
+        sigma_lower=sigma_lower,
+        sigma_upper=sigma_upper,
+        maxiters=int(maxiters),
+        ddof=int(ddof),
+        nkeep=int(nkeep),
+        maxrej=maxrej,
+        cenfunc=str(cenfunc),
+        clip_cen=str(_clip_cen),
+        revert_on_nkeep=bool(revert_on_nkeep),
+        rdnoise_ref=float(rdnoise),
+        snoise_ref=float(snoise),
+        scale_ref=float(scale_ref),
+        zero_ref=float(zero_ref),
+        gain=float(gain),
+        validate=False,
+    )
 
 
 def _ccdclip_restored_flags(
@@ -724,6 +1082,57 @@ def ccdclip_combine(
     return out.reshape(trailing)
 
 
+def ccdclip_combine_1d(
+    values: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    combine: str,
+    sigma: float | tuple[float, float] = (3.0, 3.0),
+    maxiters: int = 5,
+    ddof: int = 0,
+    nkeep: int = 1,
+    maxrej: int | None = None,
+    cenfunc: str = "median",
+    clip_cen: str | None = None,
+    revert_on_nkeep: bool = True,
+    rdnoise: float = 0.0,
+    gain: float = 1.0,
+    snoise: float = 0.0,
+    scale_ref: float = 1.0,
+    zero_ref: float = 0.0,
+    validate: bool = True,
+) -> object:
+    """Return a 1-D CCD-clipped mean or median."""
+    cb = combine.lower()
+    if cb not in ("mean", "average", "avg", "median", "med"):
+        raise NotImplementedError("fused ccdclip currently supports mean and median")
+    values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    sigma_lower, sigma_upper = _sigma_pair(sigma)
+    _clip_cen = cenfunc if clip_cen is None else clip_cen
+    kernel = (
+        _core.ccdclip_median_1d if cb in ("median", "med") else _core.ccdclip_mean_1d
+    )
+    return kernel(
+        values,
+        mask=mask,
+        sigma_lower=sigma_lower,
+        sigma_upper=sigma_upper,
+        maxiters=int(maxiters),
+        ddof=int(ddof),
+        nkeep=int(nkeep),
+        maxrej=maxrej,
+        cenfunc=str(cenfunc),
+        clip_cen=str(_clip_cen),
+        revert_on_nkeep=bool(revert_on_nkeep),
+        rdnoise_ref=float(rdnoise),
+        snoise_ref=float(snoise),
+        scale_ref=float(scale_ref),
+        zero_ref=float(zero_ref),
+        gain=float(gain),
+        validate=False,
+    )
+
+
 def _resolve_minmax_count(n: int | float, name: str, N: int) -> int:
     """Convert an n_min / n_max value to a frame count for the Rust core.
 
@@ -813,6 +1222,42 @@ def linearclip(
     )
 
 
+def linearclip_1d(
+    values: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    low_scale: float = 1.0,
+    low: float = 0.0,
+    upp_scale: float = 1.0,
+    upp: float = 0.0,
+    maxiters: int = 1,
+    nkeep: int = 1,
+    maxrej: int | None = None,
+    cenfunc: str = "median",
+    revert_on_nkeep: bool = True,
+    validate: bool = True,
+) -> tuple[np.ndarray, object, object, object, object, object]:
+    """Reject values outside center-relative linear bounds in a 1-D vector."""
+    values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    mask_rej, _std, low_arr, upp_arr, nit, output_flags = _rejection_1d_result(
+        _core.linearclip_1d(
+            values,
+            mask=mask,
+            low_scale=float(low_scale),
+            low=float(low),
+            upp_scale=float(upp_scale),
+            upp=float(upp),
+            maxiters=int(maxiters),
+            nkeep=int(nkeep),
+            maxrej=maxrej,
+            cenfunc=str(cenfunc),
+            revert_on_nkeep=bool(revert_on_nkeep),
+            validate=False,
+        )
+    )
+    return mask_rej, None, low_arr, upp_arr, nit, output_flags
+
+
 def _linearclip_restored_flags(
     arr: np.ndarray,
     *,
@@ -898,6 +1343,29 @@ def minmax(
     )
 
 
+def minmax_1d(
+    values: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    n_min: int | float = 1,
+    n_max: int | float = 1,
+    validate: bool = True,
+) -> tuple[np.ndarray, object, object, object, object, object]:
+    """Reject tail-ranked unmasked values in a 1-D value vector."""
+    values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    N = values.shape[0]
+    mask_rej, _std, low, upp, nit, output_flags = _rejection_1d_result(
+        _core.minmax_1d(
+            values,
+            mask=mask,
+            n_min=_resolve_minmax_count(n_min, "n_min", N),
+            n_max=_resolve_minmax_count(n_max, "n_max", N),
+            validate=False,
+        )
+    )
+    return mask_rej, None, low, upp, nit, output_flags
+
+
 def minmax_mask(
     arr: np.ndarray,
     *,
@@ -923,6 +1391,26 @@ def minmax_mask(
         validate=bool(validate),
     ).reshape(orig_shape)
     return _grow_rejection_mask_only(mask_rej, grow, validate=validate)
+
+
+def minmax_mask_1d(
+    values: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    n_min: int | float = 1,
+    n_max: int | float = 1,
+    validate: bool = True,
+) -> np.ndarray:
+    """Return only the minmax rejection mask for a 1-D value vector."""
+    values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    N = values.shape[0]
+    return _core.minmax_mask_1d(
+        values,
+        mask=mask,
+        n_min=_resolve_minmax_count(n_min, "n_min", N),
+        n_max=_resolve_minmax_count(n_max, "n_max", N),
+        validate=False,
+    )
 
 
 def minmax_combine(
@@ -955,6 +1443,31 @@ def minmax_combine(
         validate=bool(validate),
     )
     return out.reshape(trailing)
+
+
+def minmax_combine_1d(
+    values: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    combine: str,
+    n_min: int | float = 1,
+    n_max: int | float = 1,
+    validate: bool = True,
+) -> object:
+    """Return a 1-D minmax-rejected mean or median."""
+    cb = combine.lower()
+    if cb not in ("mean", "average", "avg", "median", "med"):
+        raise NotImplementedError("fused minmax currently supports mean and median")
+    values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    N = values.shape[0]
+    kernel = _core.minmax_median_1d if cb in ("median", "med") else _core.minmax_mean_1d
+    return kernel(
+        values,
+        mask=mask,
+        n_min=_resolve_minmax_count(n_min, "n_min", N),
+        n_max=_resolve_minmax_count(n_max, "n_max", N),
+        validate=False,
+    )
 
 
 def pclip(
@@ -1001,6 +1514,33 @@ def pclip(
     )
 
 
+def pclip_1d(
+    values: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    frac: float = -0.5,
+    sigma: float | tuple[float, float] = 3.0,
+    nkeep: int = 1,
+    validate: bool = True,
+) -> tuple[np.ndarray, object, object, object, object, object]:
+    """IRAF-style percentile clipping for a 1-D value vector."""
+    values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    pclip_value = _pclip_value(frac)
+    sigma_lower, sigma_upper = _sigma_pair(sigma)
+    mask_rej, _std, low, upp, nit, output_flags = _rejection_1d_result(
+        _core.pclip_1d(
+            values,
+            mask=mask,
+            pclip=pclip_value,
+            sigma_lower=sigma_lower,
+            sigma_upper=sigma_upper,
+            nkeep=int(nkeep),
+            validate=False,
+        )
+    )
+    return mask_rej, None, low, upp, nit, output_flags
+
+
 def pclip_mask(
     arr: np.ndarray,
     *,
@@ -1030,6 +1570,30 @@ def pclip_mask(
         validate=bool(validate),
     ).reshape(orig_shape)
     return _grow_rejection_mask_only(mask_rej, grow, validate=validate)
+
+
+def pclip_mask_1d(
+    values: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    frac: float = -0.5,
+    sigma: float | tuple[float, float] = 3.0,
+    nkeep: int = 1,
+    validate: bool = True,
+) -> np.ndarray:
+    """Return only the IRAF-style pclip rejection mask for a 1-D value vector."""
+    values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    pclip_value = _pclip_value(frac)
+    sigma_lower, sigma_upper = _sigma_pair(sigma)
+    return _core.pclip_mask_1d(
+        values,
+        mask=mask,
+        pclip=pclip_value,
+        sigma_lower=sigma_lower,
+        sigma_upper=sigma_upper,
+        nkeep=int(nkeep),
+        validate=False,
+    )
 
 
 def pclip_combine(
@@ -1066,6 +1630,35 @@ def pclip_combine(
         validate=bool(validate),
     )
     return out.reshape(trailing)
+
+
+def pclip_combine_1d(
+    values: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    combine: str,
+    frac: float = -0.5,
+    sigma: float | tuple[float, float] = 3.0,
+    nkeep: int = 1,
+    validate: bool = True,
+) -> object:
+    """Return a 1-D pclip-rejected mean or median."""
+    cb = combine.lower()
+    if cb not in ("mean", "average", "avg", "median", "med"):
+        raise NotImplementedError("fused pclip currently supports mean and median")
+    values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    pclip_value = _pclip_value(frac)
+    sigma_lower, sigma_upper = _sigma_pair(sigma)
+    kernel = _core.pclip_median_1d if cb in ("median", "med") else _core.pclip_mean_1d
+    return kernel(
+        values,
+        mask=mask,
+        pclip=pclip_value,
+        sigma_lower=sigma_lower,
+        sigma_upper=sigma_upper,
+        nkeep=int(nkeep),
+        validate=False,
+    )
 
 
 _sigclip_mask = sigclip_mask

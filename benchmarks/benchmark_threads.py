@@ -1,7 +1,7 @@
 """Tune Rayon thread counts for representative imcombiners workloads.
 
-See ``docs/quarto/benchmarks.qmd`` for usage guidance, threshold notes, and
-interpretation caveats.
+See ``docs/quarto/performance/max-performance.qmd`` for usage guidance,
+threshold notes, and interpretation caveats.
 """
 
 from __future__ import annotations

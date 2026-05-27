@@ -4,7 +4,9 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use crate::kernel::utils::{
-    parallel_threshold, set_parallel_threshold as k_set_parallel_threshold,
+    minmax_1d_parallel_threshold, parallel_threshold,
+    set_minmax_1d_parallel_threshold as k_set_minmax_1d_parallel_threshold,
+    set_parallel_threshold as k_set_parallel_threshold,
 };
 
 pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -12,6 +14,8 @@ pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(set_rayon_num_threads, m)?)?;
     m.add_function(wrap_pyfunction!(get_parallel_threshold, m)?)?;
     m.add_function(wrap_pyfunction!(set_parallel_threshold, m)?)?;
+    m.add_function(wrap_pyfunction!(get_minmax_1d_parallel_threshold, m)?)?;
+    m.add_function(wrap_pyfunction!(set_minmax_1d_parallel_threshold, m)?)?;
     Ok(())
 }
 
@@ -48,5 +52,21 @@ fn set_parallel_threshold(threshold: usize) -> PyResult<()> {
         return Err(PyValueError::new_err("parallel threshold must be positive"));
     }
     k_set_parallel_threshold(threshold);
+    Ok(())
+}
+
+#[pyfunction]
+fn get_minmax_1d_parallel_threshold() -> usize {
+    minmax_1d_parallel_threshold()
+}
+
+#[pyfunction]
+fn set_minmax_1d_parallel_threshold(threshold: usize) -> PyResult<()> {
+    if threshold == 0 {
+        return Err(PyValueError::new_err(
+            "1-D min/max parallel threshold must be positive",
+        ));
+    }
+    k_set_minmax_1d_parallel_threshold(threshold);
     Ok(())
 }

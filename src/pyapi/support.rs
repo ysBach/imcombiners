@@ -1,12 +1,12 @@
 //! Shared helpers for the PyO3 layer (dtype dispatch + tuple builders).
 
-use ndarray::{Array2, ArrayView3};
+use ndarray::{Array1, Array2, ArrayView3};
 use numpy::{IntoPyArray, PyArray3, PyArrayMethods};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
-use crate::kernel::reject::RejectOutput;
+use crate::kernel::reject::{RejectOutput, RejectOutput1d};
 use crate::kernel::utils::Float;
 
 /// Run a generic kernel `f` against `arr` after dispatching on its dtype.
@@ -48,5 +48,24 @@ pub(crate) fn reject_to_tuple<T: Float>(
     let nit = out.nit.into_pyarray(py).into_any();
     let output_flags = out.output_flags.into_pyarray(py).into_any();
     let std = out.std.into_pyarray(py).into_any();
+    PyTuple::new(py, [mask, std, low, upp, nit, output_flags]).unwrap()
+}
+
+/// Pack a 1-D rejection output into the same 6-tuple convention.
+///
+/// Diagnostic scalars are length-1 arrays so Python can use the same scalar
+/// unwrapping path without allocating stack-shaped `(1, 1)` diagnostics.
+pub(crate) fn reject_1d_to_tuple<T: Float>(
+    py: Python<'_>,
+    out: RejectOutput1d<T>,
+) -> Bound<'_, PyTuple> {
+    let mask = Array1::from_vec(out.mask).into_pyarray(py).into_any();
+    let low = Array1::from_vec(vec![out.low]).into_pyarray(py).into_any();
+    let upp = Array1::from_vec(vec![out.upp]).into_pyarray(py).into_any();
+    let nit = Array1::from_vec(vec![out.nit]).into_pyarray(py).into_any();
+    let output_flags = Array1::from_vec(vec![out.output_flags])
+        .into_pyarray(py)
+        .into_any();
+    let std = Array1::from_vec(vec![out.std]).into_pyarray(py).into_any();
     PyTuple::new(py, [mask, std, low, upp, nit, output_flags]).unwrap()
 }

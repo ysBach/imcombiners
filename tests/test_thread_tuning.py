@@ -212,6 +212,16 @@ def test_parallel_threshold_is_user_tunable():
         imc.set_parallel_threshold(original)
 
 
+def test_minmax_1d_parallel_threshold_is_user_tunable():
+    original = imc.get_minmax_1d_parallel_threshold()
+    try:
+        imc.set_minmax_1d_parallel_threshold(1234)
+        assert imc.get_minmax_1d_parallel_threshold() == 1234
+        assert imc.kernels.get_minmax_1d_parallel_threshold() == 1234
+    finally:
+        imc.set_minmax_1d_parallel_threshold(original)
+
+
 def test_rayon_thread_functions_are_exported_and_validate_values():
     assert isinstance(imc.get_rayon_num_threads(), int)
     assert imc.get_rayon_num_threads() >= 1
@@ -283,6 +293,23 @@ def test_parallel_threshold_environment_variable_is_read_in_new_process():
     )
 
     assert result.stdout.strip() == "13"
+
+
+def test_minmax_1d_parallel_threshold_environment_variable_is_read_in_new_process():
+    env = os.environ.copy()
+    env["IMCOMBINERS_1D_MINMAX_PARALLEL_THRESHOLD"] = "321"
+    snippet = "import imcombiners as imc; print(imc.get_minmax_1d_parallel_threshold())"
+
+    result = subprocess.run(
+        [sys.executable, "-c", snippet],
+        cwd=ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "321"
 
 
 def test_rayon_thread_count_can_be_set_in_new_process_before_use():

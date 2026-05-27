@@ -7,7 +7,9 @@ use ndarray::{Array2, ArrayView3};
 use numpy::Element;
 use rayon::prelude::*;
 
-use super::utils::{parallel_threshold, Float};
+use super::utils::{minmax_1d_parallel_threshold, parallel_threshold, Float};
+
+const MINMAX_1D_CHUNK: usize = 16_384;
 
 /// Combine method selector.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,21 +43,46 @@ impl CombineKind {
 // ---------- per-output-stack reductions ----------
 
 #[inline]
-fn flat_index(k: usize, pixel: usize, hw: usize) -> usize {
-    k * hw + pixel
-}
-
-#[inline]
 fn nanmean_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize) -> T {
-    let mut s = 0.0_f64;
-    let mut count = 0usize;
-    for k in 0..n {
-        let x = data[flat_index(k, pixel, hw)];
-        if x.is_finite() {
-            s += x.to_f64();
-            count += 1;
+    let mut sums = [0.0_f64; 4];
+    let mut counts = [0usize; 4];
+    let mut idx = pixel;
+    let mut k = 0usize;
+    while k + 4 <= n {
+        let x0 = data[idx];
+        let x1 = data[idx + hw];
+        let x2 = data[idx + 2 * hw];
+        let x3 = data[idx + 3 * hw];
+        if x0.is_finite() {
+            sums[0] += x0.to_f64();
+            counts[0] += 1;
         }
+        if x1.is_finite() {
+            sums[1] += x1.to_f64();
+            counts[1] += 1;
+        }
+        if x2.is_finite() {
+            sums[2] += x2.to_f64();
+            counts[2] += 1;
+        }
+        if x3.is_finite() {
+            sums[3] += x3.to_f64();
+            counts[3] += 1;
+        }
+        idx += 4 * hw;
+        k += 4;
     }
+    while k < n {
+        let x = data[idx];
+        if x.is_finite() {
+            sums[0] += x.to_f64();
+            counts[0] += 1;
+        }
+        idx += hw;
+        k += 1;
+    }
+    let s = sums.iter().sum::<f64>();
+    let count = counts.iter().sum::<usize>();
     if count == 0 {
         T::nan()
     } else {
@@ -65,15 +92,45 @@ fn nanmean_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize) -> T
 
 #[inline]
 fn nansum_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize) -> T {
-    let mut s = 0.0_f64;
-    let mut count = 0usize;
-    for k in 0..n {
-        let x = data[flat_index(k, pixel, hw)];
-        if x.is_finite() {
-            s += x.to_f64();
-            count += 1;
+    let mut sums = [0.0_f64; 4];
+    let mut counts = [0usize; 4];
+    let mut idx = pixel;
+    let mut k = 0usize;
+    while k + 4 <= n {
+        let x0 = data[idx];
+        let x1 = data[idx + hw];
+        let x2 = data[idx + 2 * hw];
+        let x3 = data[idx + 3 * hw];
+        if x0.is_finite() {
+            sums[0] += x0.to_f64();
+            counts[0] += 1;
         }
+        if x1.is_finite() {
+            sums[1] += x1.to_f64();
+            counts[1] += 1;
+        }
+        if x2.is_finite() {
+            sums[2] += x2.to_f64();
+            counts[2] += 1;
+        }
+        if x3.is_finite() {
+            sums[3] += x3.to_f64();
+            counts[3] += 1;
+        }
+        idx += 4 * hw;
+        k += 4;
     }
+    while k < n {
+        let x = data[idx];
+        if x.is_finite() {
+            sums[0] += x.to_f64();
+            counts[0] += 1;
+        }
+        idx += hw;
+        k += 1;
+    }
+    let s = sums.iter().sum::<f64>();
+    let count = counts.iter().sum::<usize>();
     if count == 0 {
         T::nan()
     } else {
@@ -84,11 +141,31 @@ fn nansum_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize) -> T 
 #[inline]
 fn nanmin_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize) -> T {
     let mut out = T::nan();
-    for k in 0..n {
-        let x = data[flat_index(k, pixel, hw)];
-        if x.is_finite() && (out.is_nan() || x < out) {
-            out = x;
-        }
+    let mut idx = pixel;
+    for _ in 0..n {
+        let x = data[idx];
+        out = out.min_num(x);
+        idx += hw;
+    }
+    out
+}
+
+#[inline]
+fn nanmin_slice<T: Float>(values: &[T]) -> T {
+    let mut outs = [T::nan(); 4];
+    let mut chunks = values.chunks_exact(4);
+    for chunk in &mut chunks {
+        outs[0] = outs[0].min_num(chunk[0]);
+        outs[1] = outs[1].min_num(chunk[1]);
+        outs[2] = outs[2].min_num(chunk[2]);
+        outs[3] = outs[3].min_num(chunk[3]);
+    }
+    let mut out = outs
+        .into_iter()
+        .reduce(|a, b| a.min_num(b))
+        .expect("fixed accumulator length is non-empty");
+    for &x in chunks.remainder() {
+        out = out.min_num(x);
     }
     out
 }
@@ -96,11 +173,31 @@ fn nanmin_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize) -> T 
 #[inline]
 fn nanmax_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize) -> T {
     let mut out = T::nan();
-    for k in 0..n {
-        let x = data[flat_index(k, pixel, hw)];
-        if x.is_finite() && (out.is_nan() || x > out) {
-            out = x;
-        }
+    let mut idx = pixel;
+    for _ in 0..n {
+        let x = data[idx];
+        out = out.max_num(x);
+        idx += hw;
+    }
+    out
+}
+
+#[inline]
+fn nanmax_slice<T: Float>(values: &[T]) -> T {
+    let mut outs = [T::nan(); 4];
+    let mut chunks = values.chunks_exact(4);
+    for chunk in &mut chunks {
+        outs[0] = outs[0].max_num(chunk[0]);
+        outs[1] = outs[1].max_num(chunk[1]);
+        outs[2] = outs[2].max_num(chunk[2]);
+        outs[3] = outs[3].max_num(chunk[3]);
+    }
+    let mut out = outs
+        .into_iter()
+        .reduce(|a, b| a.max_num(b))
+        .expect("fixed accumulator length is non-empty");
+    for &x in chunks.remainder() {
+        out = out.max_num(x);
     }
     out
 }
@@ -116,13 +213,14 @@ fn weighted_average_strided<T: Float>(
     debug_assert_eq!(n, weights.len());
     let mut s = 0.0_f64;
     let mut wsum = 0.0_f64;
-    for k in 0..n {
-        let x = data[flat_index(k, pixel, hw)];
+    let mut idx = pixel;
+    for &w in weights.iter().take(n) {
+        let x = data[idx];
         if x.is_finite() {
-            let w = weights[k];
             s += x.to_f64() * w;
             wsum += w;
         }
+        idx += hw;
     }
     if wsum == 0.0 {
         T::nan()
@@ -133,18 +231,57 @@ fn weighted_average_strided<T: Float>(
 
 #[inline]
 fn nanvariance_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize, ddof: usize) -> T {
-    let mut sum = 0.0_f64;
-    let mut sumsq = 0.0_f64;
-    let mut count = 0usize;
-    for k in 0..n {
-        let x = data[flat_index(k, pixel, hw)];
+    let mut sums = [0.0_f64; 4];
+    let mut sumsqs = [0.0_f64; 4];
+    let mut counts = [0usize; 4];
+    let mut idx = pixel;
+    let mut k = 0usize;
+    while k + 4 <= n {
+        let x0 = data[idx];
+        let x1 = data[idx + hw];
+        let x2 = data[idx + 2 * hw];
+        let x3 = data[idx + 3 * hw];
+        if x0.is_finite() {
+            let xf = x0.to_f64();
+            sums[0] += xf;
+            sumsqs[0] += xf * xf;
+            counts[0] += 1;
+        }
+        if x1.is_finite() {
+            let xf = x1.to_f64();
+            sums[1] += xf;
+            sumsqs[1] += xf * xf;
+            counts[1] += 1;
+        }
+        if x2.is_finite() {
+            let xf = x2.to_f64();
+            sums[2] += xf;
+            sumsqs[2] += xf * xf;
+            counts[2] += 1;
+        }
+        if x3.is_finite() {
+            let xf = x3.to_f64();
+            sums[3] += xf;
+            sumsqs[3] += xf * xf;
+            counts[3] += 1;
+        }
+        idx += 4 * hw;
+        k += 4;
+    }
+    while k < n {
+        let x = data[idx];
         if x.is_finite() {
             let xf = x.to_f64();
-            sum += xf;
-            sumsq += xf * xf;
-            count += 1;
+            sums[0] += xf;
+            sumsqs[0] += xf * xf;
+            counts[0] += 1;
         }
+        idx += hw;
+        k += 1;
     }
+    let sum = sums.iter().sum::<f64>();
+    let sumsq = sumsqs.iter().sum::<f64>();
+    let count = counts.iter().sum::<usize>();
     if count <= ddof {
         return T::nan();
     }
@@ -163,20 +300,21 @@ fn compact_finite_strided<T: Float>(
     buf: &mut [T],
 ) -> usize {
     let mut count = 0;
-    for k in 0..n {
-        let x = data[flat_index(k, pixel, hw)];
+    let mut idx = pixel;
+    for _ in 0..n {
+        let x = data[idx];
         if x.is_finite() {
             buf[count] = x;
             count += 1;
         }
+        idx += hw;
     }
     count
 }
 
-/// In-place partial sort; we just sort fully (stack length is small, O(N log N) is fine).
 #[inline]
-fn sort_floats<T: Float>(buf: &mut [T]) {
-    buf.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+fn cmp_float<T: Float>(a: &T, b: &T) -> std::cmp::Ordering {
+    a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
 }
 
 #[inline]
@@ -185,32 +323,32 @@ fn nanmedian_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize, bu
     if count == 0 {
         return T::nan();
     }
-    let s = &mut buf[..count];
-    sort_floats(s);
     let mid = count / 2;
+    let s = &mut buf[..count];
     if count % 2 == 1 {
-        s[mid]
+        let (_, value, _) = s.select_nth_unstable_by(mid, cmp_float);
+        *value
     } else {
-        // Average of two middle values.
-        T::from_f64((s[mid - 1].to_f64() + s[mid].to_f64()) / 2.0)
+        let (_, upper, _) = s.select_nth_unstable_by(mid, cmp_float);
+        let upper = *upper;
+        let lower = s[..mid]
+            .iter()
+            .copied()
+            .max_by(cmp_float)
+            .expect("even median lower partition is non-empty");
+        T::from_f64((lower.to_f64() + upper.to_f64()) / 2.0)
     }
 }
 
 #[inline]
 fn nanlmedian_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize, buf: &mut [T]) -> T {
-    // Lower median: for even N, return s[mid-1].
     let count = compact_finite_strided(data, pixel, n, hw, buf);
     if count == 0 {
         return T::nan();
     }
-    let s = &mut buf[..count];
-    sort_floats(s);
-    let mid = count / 2;
-    if count % 2 == 1 {
-        s[mid]
-    } else {
-        s[mid - 1]
-    }
+    let idx = (count - 1) / 2;
+    let (_, value, _) = buf[..count].select_nth_unstable_by(idx, cmp_float);
+    *value
 }
 
 // ---------- driver ----------
@@ -242,38 +380,57 @@ pub fn combine_axis0<T: Float>(
         .as_slice_memory_order()
         .expect("combine kernels require contiguous C-order arrays");
 
-    let compute_pixel = |pixel: usize, out_px: &mut T| {
-        *out_px = match kind {
-            CombineKind::Mean => nanmean_strided(data, pixel, n, hw),
-            CombineKind::Sum => nansum_strided(data, pixel, n, hw),
-            CombineKind::Min => nanmin_strided(data, pixel, n, hw),
-            CombineKind::Max => nanmax_strided(data, pixel, n, hw),
-            CombineKind::Variance => nanvariance_strided(data, pixel, n, hw, ddof),
-            CombineKind::Median => {
-                let mut tmp: Vec<T> = vec![T::zero(); n];
-                nanmedian_strided(data, pixel, n, hw, &mut tmp)
+    match kind {
+        CombineKind::Median | CombineKind::LMedian => {
+            let compute_with_tmp = |tmp: &mut Vec<T>, (pixel, out_px): (usize, &mut T)| {
+                tmp.resize(n, T::zero());
+                *out_px = if matches!(kind, CombineKind::Median) {
+                    nanmedian_strided(data, pixel, n, hw, tmp)
+                } else {
+                    nanlmedian_strided(data, pixel, n, hw, tmp)
+                };
+            };
+            if hw >= parallel_threshold() {
+                out_slice
+                    .par_iter_mut()
+                    .enumerate()
+                    .map_init(|| vec![T::zero(); n], compute_with_tmp)
+                    .count();
+            } else {
+                let mut tmp = vec![T::zero(); n];
+                out_slice
+                    .iter_mut()
+                    .enumerate()
+                    .for_each(|item| compute_with_tmp(&mut tmp, item));
             }
-            CombineKind::LMedian => {
-                let mut tmp: Vec<T> = vec![T::zero(); n];
-                nanlmedian_strided(data, pixel, n, hw, &mut tmp)
+        }
+        _ => {
+            let compute_pixel = |pixel: usize, out_px: &mut T| {
+                *out_px = match kind {
+                    CombineKind::Mean => nanmean_strided(data, pixel, n, hw),
+                    CombineKind::Sum => nansum_strided(data, pixel, n, hw),
+                    CombineKind::Min => nanmin_strided(data, pixel, n, hw),
+                    CombineKind::Max => nanmax_strided(data, pixel, n, hw),
+                    CombineKind::Variance => nanvariance_strided(data, pixel, n, hw, ddof),
+                    CombineKind::WeightedAverage => {
+                        let w_ref = weights.expect("weights checked above");
+                        weighted_average_strided(data, pixel, n, hw, w_ref)
+                    }
+                    CombineKind::Median | CombineKind::LMedian => unreachable!(),
+                };
+            };
+            if hw >= parallel_threshold() {
+                out_slice
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(pixel, out_px)| compute_pixel(pixel, out_px));
+            } else {
+                out_slice
+                    .iter_mut()
+                    .enumerate()
+                    .for_each(|(pixel, out_px)| compute_pixel(pixel, out_px));
             }
-            CombineKind::WeightedAverage => {
-                let w_ref = weights.expect("weights checked above");
-                weighted_average_strided(data, pixel, n, hw, w_ref)
-            }
-        };
-    };
-
-    if hw >= parallel_threshold() {
-        out_slice
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(pixel, out_px)| compute_pixel(pixel, out_px));
-    } else {
-        out_slice
-            .iter_mut()
-            .enumerate()
-            .for_each(|(pixel, out_px)| compute_pixel(pixel, out_px));
+        }
     }
 
     out
@@ -292,23 +449,246 @@ where
         .as_slice_memory_order()
         .expect("lmedian kernel requires contiguous C-order arrays");
 
-    let compute_pixel = |pixel: usize, out_px: &mut T| {
-        let mut col: Vec<T> = (0..n).map(|k| data[flat_index(k, pixel, hw)]).collect();
-        col.sort_unstable();
-        *out_px = col[kth];
+    let compute_pixel = |col: &mut Vec<T>, (pixel, out_px): (usize, &mut T)| {
+        col.clear();
+        let mut idx = pixel;
+        for _ in 0..n {
+            col.push(data[idx]);
+            idx += hw;
+        }
+        let (_, value, _) = col.select_nth_unstable(kth);
+        *out_px = *value;
     };
 
     if hw >= parallel_threshold() {
         out_slice
             .par_iter_mut()
             .enumerate()
-            .for_each(|(pixel, out_px)| compute_pixel(pixel, out_px));
+            .map_init(|| Vec::<T>::with_capacity(n), compute_pixel)
+            .count();
     } else {
+        let mut col = Vec::<T>::with_capacity(n);
         out_slice
             .iter_mut()
             .enumerate()
-            .for_each(|(pixel, out_px)| compute_pixel(pixel, out_px));
+            .for_each(|item| compute_pixel(&mut col, item));
     }
 
     out
+}
+
+#[inline]
+fn compact_finite_1d<T: Float>(values: &[T], buf: &mut Vec<T>) {
+    buf.clear();
+    for &x in values {
+        if x.is_finite() {
+            buf.push(x);
+        }
+    }
+}
+
+pub fn mean_1d<T: Float>(values: &[T]) -> T {
+    let mut sums = [0.0_f64; 4];
+    let mut counts = [0usize; 4];
+    let mut chunks = values.chunks_exact(4);
+    for chunk in &mut chunks {
+        let x0 = chunk[0];
+        let x1 = chunk[1];
+        let x2 = chunk[2];
+        let x3 = chunk[3];
+        if x0.is_finite() {
+            sums[0] += x0.to_f64();
+            counts[0] += 1;
+        }
+        if x1.is_finite() {
+            sums[1] += x1.to_f64();
+            counts[1] += 1;
+        }
+        if x2.is_finite() {
+            sums[2] += x2.to_f64();
+            counts[2] += 1;
+        }
+        if x3.is_finite() {
+            sums[3] += x3.to_f64();
+            counts[3] += 1;
+        }
+    }
+    for &x in chunks.remainder() {
+        if x.is_finite() {
+            sums[0] += x.to_f64();
+            counts[0] += 1;
+        }
+    }
+    let sum = sums.iter().sum::<f64>();
+    let count = counts.iter().sum::<usize>();
+    if count == 0 {
+        T::nan()
+    } else {
+        T::from_f64(sum / count as f64)
+    }
+}
+
+pub fn sum_1d<T: Float>(values: &[T]) -> T {
+    let mut sums = [0.0_f64; 4];
+    let mut counts = [0usize; 4];
+    let mut chunks = values.chunks_exact(4);
+    for chunk in &mut chunks {
+        let x0 = chunk[0];
+        let x1 = chunk[1];
+        let x2 = chunk[2];
+        let x3 = chunk[3];
+        if x0.is_finite() {
+            sums[0] += x0.to_f64();
+            counts[0] += 1;
+        }
+        if x1.is_finite() {
+            sums[1] += x1.to_f64();
+            counts[1] += 1;
+        }
+        if x2.is_finite() {
+            sums[2] += x2.to_f64();
+            counts[2] += 1;
+        }
+        if x3.is_finite() {
+            sums[3] += x3.to_f64();
+            counts[3] += 1;
+        }
+    }
+    for &x in chunks.remainder() {
+        if x.is_finite() {
+            sums[0] += x.to_f64();
+            counts[0] += 1;
+        }
+    }
+    let sum = sums.iter().sum::<f64>();
+    let count = counts.iter().sum::<usize>();
+    if count == 0 {
+        T::nan()
+    } else {
+        T::from_f64(sum)
+    }
+}
+
+pub fn min_1d<T: Float>(values: &[T]) -> T {
+    if values.len() >= minmax_1d_parallel_threshold() {
+        return values
+            .par_chunks(MINMAX_1D_CHUNK)
+            .map(nanmin_slice)
+            .reduce(T::nan, |a, b| a.min_num(b));
+    }
+    nanmin_slice(values)
+}
+
+pub fn max_1d<T: Float>(values: &[T]) -> T {
+    if values.len() >= minmax_1d_parallel_threshold() {
+        return values
+            .par_chunks(MINMAX_1D_CHUNK)
+            .map(nanmax_slice)
+            .reduce(T::nan, |a, b| a.max_num(b));
+    }
+    nanmax_slice(values)
+}
+
+pub fn variance_1d<T: Float>(values: &[T], ddof: usize) -> T {
+    let mut sums = [0.0_f64; 4];
+    let mut sumsqs = [0.0_f64; 4];
+    let mut counts = [0usize; 4];
+    let mut chunks = values.chunks_exact(4);
+    for chunk in &mut chunks {
+        let x0 = chunk[0];
+        let x1 = chunk[1];
+        let x2 = chunk[2];
+        let x3 = chunk[3];
+        if x0.is_finite() {
+            let xf = x0.to_f64();
+            sums[0] += xf;
+            sumsqs[0] += xf * xf;
+            counts[0] += 1;
+        }
+        if x1.is_finite() {
+            let xf = x1.to_f64();
+            sums[1] += xf;
+            sumsqs[1] += xf * xf;
+            counts[1] += 1;
+        }
+        if x2.is_finite() {
+            let xf = x2.to_f64();
+            sums[2] += xf;
+            sumsqs[2] += xf * xf;
+            counts[2] += 1;
+        }
+        if x3.is_finite() {
+            let xf = x3.to_f64();
+            sums[3] += xf;
+            sumsqs[3] += xf * xf;
+            counts[3] += 1;
+        }
+    }
+    for &x in chunks.remainder() {
+        if x.is_finite() {
+            let xf = x.to_f64();
+            sums[0] += xf;
+            sumsqs[0] += xf * xf;
+            counts[0] += 1;
+        }
+    }
+    let sum = sums.iter().sum::<f64>();
+    let sumsq = sumsqs.iter().sum::<f64>();
+    let count = counts.iter().sum::<usize>();
+    if count <= ddof {
+        return T::nan();
+    }
+    let mean = sum / count as f64;
+    let numerator = (sumsq - sum * mean).max(0.0);
+    T::from_f64(numerator / (count - ddof) as f64)
+}
+
+pub fn median_1d<T: Float>(values: &[T]) -> T {
+    let mut buf = Vec::<T>::with_capacity(values.len());
+    compact_finite_1d(values, &mut buf);
+    if buf.is_empty() {
+        return T::nan();
+    }
+    let mid = buf.len() / 2;
+    if buf.len() % 2 == 1 {
+        let (_, value, _) = buf.select_nth_unstable_by(mid, cmp_float);
+        *value
+    } else {
+        let (_, upper, _) = buf.select_nth_unstable_by(mid, cmp_float);
+        let upper = *upper;
+        let lower = buf[..mid]
+            .iter()
+            .copied()
+            .max_by(cmp_float)
+            .expect("even median lower partition is non-empty");
+        T::from_f64((lower.to_f64() + upper.to_f64()) / 2.0)
+    }
+}
+
+pub fn lmedian_1d<T: Float>(values: &[T]) -> T {
+    let mut buf = Vec::<T>::with_capacity(values.len());
+    compact_finite_1d(values, &mut buf);
+    if buf.is_empty() {
+        return T::nan();
+    }
+    let idx = (buf.len() - 1) / 2;
+    let (_, value, _) = buf.select_nth_unstable_by(idx, cmp_float);
+    *value
+}
+
+pub fn weighted_average_1d<T: Float>(values: &[T], weights: &[f64]) -> T {
+    debug_assert_eq!(values.len(), weights.len());
+    let mut sum = 0.0_f64;
+    let mut wsum = 0.0_f64;
+    for (&x, &w) in values.iter().zip(weights) {
+        if x.is_finite() {
+            sum += x.to_f64() * w;
+            wsum += w;
+        }
+    }
+    if wsum == 0.0 {
+        T::nan()
+    } else {
+        T::from_f64(sum / wsum)
+    }
 }

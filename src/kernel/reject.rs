@@ -14,11 +14,6 @@ const SAMPLE_RESTORED_NKEEP: u8 = 64;
 const SAMPLE_RESTORED_MAXREJ: u8 = 128;
 
 #[inline]
-fn flat_index(k: usize, pixel: usize, hw: usize) -> usize {
-    k * hw + pixel
-}
-
-#[inline]
 fn cmp_f64(a: &f64, b: &f64) -> Ordering {
     a.total_cmp(b)
 }
@@ -105,6 +100,22 @@ impl ClipCenter {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StdFunc {
+    Std,
+    Mad,
+}
+
+impl StdFunc {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "std" | "standard_deviation" | "standard-deviation" => Some(Self::Std),
+            "mad" | "median_absolute_deviation" | "median-absolute-deviation" => Some(Self::Mad),
+            _ => None,
+        }
+    }
+}
+
 pub struct SigClipParams {
     pub sigma_lower: f64,
     pub sigma_upper: f64,
@@ -114,6 +125,7 @@ pub struct SigClipParams {
     pub maxrej: usize,
     pub cenfunc: CenFunc,
     pub clip_cen: ClipCenter,
+    pub stdfunc: StdFunc,
     pub revert_on_nkeep: bool,
     // ccdclip fields (used only when ccdclip == true)
     pub ccdclip: bool,
@@ -143,6 +155,15 @@ pub struct RejectOutput<T: Float> {
     pub nit: Array2<u8>,    // (H, W)
     pub output_flags: Array2<u8>, // (H, W)
     pub std: Array2<T>,     // (H, W)
+}
+
+pub struct RejectOutput1d<T: Float> {
+    pub mask: Vec<bool>,
+    pub low: T,
+    pub upp: T,
+    pub nit: u8,
+    pub output_flags: u8,
+    pub std: T,
 }
 
 struct RejectCompute<T: Float> {
@@ -337,11 +358,12 @@ pub fn linearclip<T: Float>(
         let mut source_col = vec![T::zero(); n];
         let mut mask_in_col = vec![false; n];
         let mut out_col = vec![false; n];
+        let mut raw_idx = idx;
         for k in 0..n {
-            let raw_idx = flat_index(k, idx, hw);
             let x = data[raw_idx];
             source_col[k] = x;
             mask_in_col[k] = mask_data.is_some_and(|m| m[raw_idx]);
+            raw_idx += hw;
         }
         let mut buf = Vec::<f64>::with_capacity(n);
         let mut scratch = LinearClipPixelScratch::new();
@@ -407,6 +429,33 @@ pub fn linearclip<T: Float>(
     }
 }
 
+pub fn linearclip_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    p: &LinearClipParams,
+) -> RejectOutput1d<T> {
+    let n = values.len();
+    let no_mask;
+    let mask = if let Some(mask) = mask_in {
+        mask
+    } else {
+        no_mask = vec![false; n];
+        &no_mask
+    };
+    let mut out_mask = vec![false; n];
+    let mut buf = Vec::<f64>::with_capacity(n);
+    let mut scratch = LinearClipPixelScratch::new();
+    let px = linearclip_pixel(values, mask, p, &mut buf, &mut out_mask, None, &mut scratch);
+    RejectOutput1d {
+        mask: out_mask,
+        low: px.low,
+        upp: px.upp,
+        nit: px.nit,
+        output_flags: px.output_flags,
+        std: T::nan(),
+    }
+}
+
 pub fn linearclip_restored_flags<T: Float>(
     arr: &ArrayView3<T>,
     mask_in: Option<&ArrayView3<bool>>,
@@ -429,10 +478,11 @@ pub fn linearclip_restored_flags<T: Float>(
         let mut mask_in_col = vec![false; n];
         let mut out_col = vec![false; n];
         let mut restored_col = vec![0_u8; n];
+        let mut raw_idx = idx;
         for k in 0..n {
-            let raw_idx = flat_index(k, idx, hw);
             source_col[k] = data[raw_idx];
             mask_in_col[k] = mask_data.is_some_and(|m| m[raw_idx]);
+            raw_idx += hw;
         }
         let mut buf = Vec::<f64>::with_capacity(n);
         let mut scratch = LinearClipPixelScratch::new();
@@ -502,7 +552,7 @@ impl SigClipPixelScratch {
 // masks and non-finite values into `mask`.
 
 #[inline]
-fn col_nanmean_std<T: Float>(vals: &[T], mask: &[bool], ddof: usize) -> (T, T) {
+fn col_nanmean_var<T: Float>(vals: &[T], mask: &[bool], ddof: usize) -> (T, f64) {
     debug_assert_mask_covers_nonfinite(vals, mask);
     let mut s = 0.0_f64;
     let mut ss = 0.0_f64;
@@ -516,16 +566,16 @@ fn col_nanmean_std<T: Float>(vals: &[T], mask: &[bool], ddof: usize) -> (T, T) {
         }
     }
     if n == 0 {
-        return (T::nan(), T::nan());
+        return (T::nan(), f64::NAN);
     }
     let mean = s / n as f64;
-    let std = if n <= ddof {
-        T::nan()
+    let var = if n <= ddof {
+        f64::NAN
     } else {
         let var_num = (ss - s * mean).max(0.0);
-        T::from_f64((var_num / (n - ddof) as f64).sqrt())
+        var_num / (n - ddof) as f64
     };
-    (T::from_f64(mean), std)
+    (T::from_f64(mean), var)
 }
 
 #[inline]
@@ -579,10 +629,10 @@ fn col_nanlmedian<T: Float>(vals: &[T], mask: &[bool], buf: &mut Vec<f64>) -> T 
 }
 
 #[inline]
-fn col_nanstd_about<T: Float>(vals: &[T], mask: &[bool], center: T, ddof: usize) -> T {
+fn col_nanvariance_about<T: Float>(vals: &[T], mask: &[bool], center: T, ddof: usize) -> f64 {
     debug_assert_mask_covers_nonfinite(vals, mask);
     if center.is_nan() {
-        return T::nan();
+        return f64::NAN;
     }
     let center_f = center.to_f64();
     let mut s = 0.0_f64;
@@ -595,9 +645,39 @@ fn col_nanstd_about<T: Float>(vals: &[T], mask: &[bool], center: T, ddof: usize)
         }
     }
     if n <= ddof {
+        return f64::NAN;
+    }
+    s / (n - ddof) as f64
+}
+
+#[inline]
+fn col_nanmad_sigma_about<T: Float>(
+    vals: &[T],
+    mask: &[bool],
+    center: T,
+    ddof: usize,
+    buf: &mut Vec<f64>,
+) -> T {
+    debug_assert_mask_covers_nonfinite(vals, mask);
+    if center.is_nan() {
         return T::nan();
     }
-    T::from_f64((s / (n - ddof) as f64).sqrt())
+    let center_f = center.to_f64();
+    buf.clear();
+    for (i, &x) in vals.iter().enumerate() {
+        if !mask[i] {
+            buf.push((x.to_f64() - center_f).abs());
+        }
+    }
+    let n = buf.len();
+    if n <= ddof {
+        return T::nan();
+    }
+    let mut sigma = 1.4826 * median_f64(buf);
+    if ddof > 0 {
+        sigma *= (n as f64 / (n - ddof) as f64).sqrt();
+    }
+    T::from_f64(sigma)
 }
 
 #[inline]
@@ -665,6 +745,84 @@ fn final_combine<T: Float>(
     }
 }
 
+#[inline]
+fn final_combine_from_sorted_pairs_t<T: Float>(
+    pairs: &[(T, usize)],
+    mask: &[bool],
+    kind: FinalCombineKind,
+    buf: &mut Vec<f64>,
+) -> T {
+    match kind {
+        FinalCombineKind::Mean => {
+            let mut sum = 0.0_f64;
+            let mut count = 0usize;
+            for &(value, k) in pairs {
+                if !mask[k] {
+                    sum += value.to_f64();
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                T::nan()
+            } else {
+                T::from_f64(sum / count as f64)
+            }
+        }
+        FinalCombineKind::Median => {
+            buf.clear();
+            for &(value, k) in pairs {
+                if !mask[k] {
+                    buf.push(value.to_f64());
+                }
+            }
+            if buf.is_empty() {
+                T::nan()
+            } else {
+                T::from_f64(median_f64(buf))
+            }
+        }
+    }
+}
+
+#[inline]
+fn final_combine_from_sorted_pairs_f64<T: Float>(
+    pairs: &[(f64, usize)],
+    mask: &[bool],
+    kind: FinalCombineKind,
+    buf: &mut Vec<f64>,
+) -> T {
+    match kind {
+        FinalCombineKind::Mean => {
+            let mut sum = 0.0_f64;
+            let mut count = 0usize;
+            for &(value, k) in pairs {
+                if !mask[k] {
+                    sum += value;
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                T::nan()
+            } else {
+                T::from_f64(sum / count as f64)
+            }
+        }
+        FinalCombineKind::Median => {
+            buf.clear();
+            for &(value, k) in pairs {
+                if !mask[k] {
+                    buf.push(value);
+                }
+            }
+            if buf.is_empty() {
+                T::nan()
+            } else {
+                T::from_f64(median_f64(buf))
+            }
+        }
+    }
+}
+
 // ---------- per-pixel sigclip / ccdclip ----------
 
 /// Returns (mask_out, low, upp, nit, output_flags).
@@ -714,23 +872,28 @@ fn sigclip_pixel<T: Float>(
 
     for k in 0..p.maxiters {
         stopped_maxiters = k + 1 == p.maxiters;
-        let (cen, _std_center, std) = clipping_center_and_std(col, mask, p, buf);
+        let (cen, _std_center, std, spread_sq) =
+            clipping_center_and_spread(col, mask, p, diagnostics, buf);
 
-        if cen.is_nan() || std.is_nan() {
+        if cen.is_nan() || !spread_sq.is_finite() {
             break;
         }
         std_out = std;
 
-        let lo_try_bound = cen.to_f64() - p.sigma_lower * std.to_f64();
-        let up_try_bound = cen.to_f64() + p.sigma_upper * std.to_f64();
+        let center = cen.to_f64();
+        let lower_limit_sq = p.sigma_lower * p.sigma_lower * spread_sq;
+        let upper_limit_sq = p.sigma_upper * p.sigma_upper * spread_sq;
         // Tentatively reject out-of-bounds; track new finite count.
         let mut n_finite_new = 0usize;
         // We'll need to roll back if nkeep/maxrej limits trip; so save current mask + bounds.
         scratch.newly_masked.clear();
         for i in 0..n {
             if !mask[i] {
-                let x = col[i].to_f64();
-                if x < lo_try_bound || x > up_try_bound {
+                let delta = col[i].to_f64() - center;
+                let delta_sq = delta * delta;
+                if (delta < 0.0 && delta_sq > lower_limit_sq)
+                    || (delta > 0.0 && delta_sq > upper_limit_sq)
+                {
                     mask[i] = true;
                     scratch.newly_masked.push(i);
                 } else {
@@ -811,17 +974,18 @@ fn sigclip_pixel<T: Float>(
     }
 }
 
-fn clipping_center_and_std<T: Float>(
+fn clipping_center_and_spread<T: Float>(
     col: &[T],
     mask: &[bool],
     p: &SigClipParams,
+    diagnostics: bool,
     buf: &mut Vec<f64>,
-) -> (T, T, T) {
+) -> (T, T, T, f64) {
     let mut mean_std = None;
     let mut mean_value = None;
     let needs_mean_std = !p.ccdclip && p.clip_cen == ClipCenter::Mean;
     let cen = if needs_mean_std {
-        let stats = col_nanmean_std(col, mask, p.ddof);
+        let stats = col_nanmean_var(col, mask, p.ddof);
         mean_std = Some(stats);
         mean_value = Some(stats.0);
         match p.cenfunc {
@@ -862,28 +1026,53 @@ fn clipping_center_and_std<T: Float>(
         }
         ClipCenter::ClippingCenter => cen,
     };
-    let std = if p.ccdclip {
-        // sqrt((1 + snoise_ref) * abs(center + zero_ref) * scale_ref + rdnoise_ref^2)
+    let (std, spread_sq) = if p.ccdclip {
+        // Variance from the CCD noise model. The square root is only needed
+        // for diagnostics; clipping compares squared residuals to this value.
         if std_center.is_nan() {
-            T::nan()
+            (T::nan(), f64::NAN)
         } else {
             let c = std_center.to_f64();
             let v = (1.0 + p.snoise_ref) * (c + p.zero_ref).abs() * p.scale_ref
                 + p.rdnoise_ref * p.rdnoise_ref;
-            T::from_f64(v.sqrt())
+            let std = if diagnostics {
+                T::from_f64(v.sqrt())
+            } else {
+                T::nan()
+            };
+            (std, v)
         }
     } else {
-        match p.clip_cen {
-            ClipCenter::Mean => {
-                mean_std.map_or_else(|| col_nanmean_std(col, mask, p.ddof).1, |stats| stats.1)
+        match p.stdfunc {
+            StdFunc::Std => {
+                let var = match p.clip_cen {
+                    ClipCenter::Mean => mean_std
+                        .map_or_else(|| col_nanmean_var(col, mask, p.ddof).1, |stats| stats.1),
+                    ClipCenter::Median | ClipCenter::LowerMedian => {
+                        col_nanvariance_about(col, mask, std_center, p.ddof)
+                    }
+                    ClipCenter::ClippingCenter => col_nanvariance_about(col, mask, cen, p.ddof),
+                };
+                let std = if diagnostics && var.is_finite() {
+                    T::from_f64(var.sqrt())
+                } else {
+                    T::nan()
+                };
+                (std, var)
             }
-            ClipCenter::Median | ClipCenter::LowerMedian => {
-                col_nanstd_about(col, mask, std_center, p.ddof)
+            StdFunc::Mad => {
+                let spread = col_nanmad_sigma_about(col, mask, std_center, p.ddof, buf);
+                let spread_sq = if spread.is_nan() {
+                    f64::NAN
+                } else {
+                    let spread = spread.to_f64();
+                    spread * spread
+                };
+                (spread, spread_sq)
             }
-            ClipCenter::ClippingCenter => col_nanstd_about(col, mask, cen, p.ddof),
         }
     };
-    (cen, std_center, std)
+    (cen, std_center, std, spread_sq)
 }
 
 /// Sigclip / ccdclip driver (the only difference is how `std` is computed inside the loop,
@@ -933,6 +1122,52 @@ pub fn sigclip_mask_1d<T: Float>(
     out_mask
 }
 
+pub fn sigclip_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    p: &SigClipParams,
+) -> RejectOutput1d<T> {
+    let n = values.len();
+    let reject_values;
+    let col = if p.ccdclip && p.rejection_gain != 1.0 {
+        reject_values = values
+            .iter()
+            .map(|&value| T::from_f64(value.to_f64() / p.rejection_gain))
+            .collect::<Vec<_>>();
+        &reject_values[..]
+    } else {
+        values
+    };
+    let no_mask;
+    let mask = if let Some(mask) = mask_in {
+        mask
+    } else {
+        no_mask = vec![false; n];
+        &no_mask
+    };
+    let mut out_mask = vec![false; n];
+    let mut buf = Vec::<f64>::with_capacity(n);
+    let mut scratch = SigClipPixelScratch::new();
+    let px = sigclip_pixel(
+        col,
+        mask,
+        p,
+        true,
+        &mut buf,
+        &mut out_mask,
+        None,
+        &mut scratch,
+    );
+    RejectOutput1d {
+        mask: out_mask,
+        low: px.low,
+        upp: px.upp,
+        nit: px.nit,
+        output_flags: px.output_flags,
+        std: px.std,
+    }
+}
+
 struct SigClipCombineScratch<T: Float> {
     reject_col: Vec<T>,
     source_col: Vec<T>,
@@ -962,6 +1197,35 @@ impl<T: Float> SigClipCombineScratch<T> {
     }
 }
 
+struct SigClipResultScratch<T: Float> {
+    col: Vec<T>,
+    mask_in_col: Vec<bool>,
+    out_mask: Vec<bool>,
+    stat_buf: Vec<f64>,
+    pixel: SigClipPixelScratch,
+    restored_col: Vec<u8>,
+}
+
+impl<T: Float> SigClipResultScratch<T> {
+    fn with_capacity(n: usize) -> Self {
+        Self {
+            col: vec![T::zero(); n],
+            mask_in_col: vec![false; n],
+            out_mask: vec![false; n],
+            stat_buf: Vec::with_capacity(n),
+            pixel: SigClipPixelScratch::new(),
+            restored_col: vec![0; n],
+        }
+    }
+
+    fn ensure_len(&mut self, n: usize) {
+        self.col.resize(n, T::zero());
+        self.mask_in_col.resize(n, false);
+        self.out_mask.resize(n, false);
+        self.restored_col.resize(n, 0);
+    }
+}
+
 fn sigclip_final_combine<T: Float>(
     arr: &ArrayView3<T>,
     mask_in: Option<&ArrayView3<bool>>,
@@ -978,8 +1242,8 @@ fn sigclip_final_combine<T: Float>(
 
     let compute_pixel = |scratch: &mut SigClipCombineScratch<T>, idx: usize| {
         scratch.ensure_len(n);
+        let mut raw_idx = idx;
         for k in 0..n {
-            let raw_idx = flat_index(k, idx, hw);
             let source = data[raw_idx];
             scratch.source_col[k] = source;
             scratch.reject_col[k] = if rejection_gain == 1.0 {
@@ -988,6 +1252,7 @@ fn sigclip_final_combine<T: Float>(
                 T::from_f64(source.to_f64() / rejection_gain)
             };
             scratch.mask_in_col[k] = mask_data.is_some_and(|m| m[raw_idx]);
+            raw_idx += hw;
         }
         sigclip_pixel(
             &scratch.reject_col,
@@ -1059,6 +1324,73 @@ pub fn ccdclip_median<T: Float>(
     sigclip_final_combine(arr, mask_in, p, FinalCombineKind::Median, gain)
 }
 
+fn sigclip_final_combine_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    p: &SigClipParams,
+    kind: FinalCombineKind,
+    rejection_gain: f64,
+) -> T {
+    let n = values.len();
+    let no_mask;
+    let mask = if let Some(mask) = mask_in {
+        mask
+    } else {
+        no_mask = vec![false; n];
+        &no_mask
+    };
+
+    let mut reject_col = vec![T::zero(); n];
+    let mut out_mask = vec![false; n];
+    for (i, &source) in values.iter().enumerate() {
+        reject_col[i] = if rejection_gain == 1.0 {
+            source
+        } else {
+            T::from_f64(source.to_f64() / rejection_gain)
+        };
+    }
+
+    let mut stat_buf = Vec::<f64>::with_capacity(n);
+    let mut pixel_scratch = SigClipPixelScratch::new();
+    sigclip_pixel(
+        &reject_col,
+        mask,
+        p,
+        false,
+        &mut stat_buf,
+        &mut out_mask,
+        None,
+        &mut pixel_scratch,
+    );
+    final_combine(values, &out_mask, kind, &mut stat_buf)
+}
+
+pub fn sigclip_mean_1d<T: Float>(values: &[T], mask_in: Option<&[bool]>, p: &SigClipParams) -> T {
+    sigclip_final_combine_1d(values, mask_in, p, FinalCombineKind::Mean, 1.0)
+}
+
+pub fn sigclip_median_1d<T: Float>(values: &[T], mask_in: Option<&[bool]>, p: &SigClipParams) -> T {
+    sigclip_final_combine_1d(values, mask_in, p, FinalCombineKind::Median, 1.0)
+}
+
+pub fn ccdclip_mean_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    p: &SigClipParams,
+    gain: f64,
+) -> T {
+    sigclip_final_combine_1d(values, mask_in, p, FinalCombineKind::Mean, gain)
+}
+
+pub fn ccdclip_median_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    p: &SigClipParams,
+    gain: f64,
+) -> T {
+    sigclip_final_combine_1d(values, mask_in, p, FinalCombineKind::Median, gain)
+}
+
 pub fn sigclip_restored_flags<T: Float>(
     arr: &ArrayView3<T>,
     mask_in: Option<&ArrayView3<bool>>,
@@ -1067,52 +1399,50 @@ pub fn sigclip_restored_flags<T: Float>(
     let (n, h, w) = (arr.shape()[0], arr.shape()[1], arr.shape()[2]);
     let hw = h * w;
     let mut flags_out = Array3::<u8>::zeros((n, h, w));
+    let data = arr
+        .as_slice_memory_order()
+        .expect("sigclip restored-flags kernel requires contiguous C-order arrays");
+    let mask_data = mask_in.and_then(|m| m.as_slice_memory_order());
 
-    struct Px {
-        flags_col: Vec<u8>,
-    }
-
-    let compute_pixel = |idx: usize| {
-        let i = idx / w;
-        let j = idx % w;
-        let col: Vec<T> = (0..n)
-            .map(|k| {
-                let value = arr[[k, i, j]];
-                if p.ccdclip && p.rejection_gain != 1.0 {
-                    T::from_f64(value.to_f64() / p.rejection_gain)
-                } else {
-                    value
-                }
-            })
-            .collect();
-        let mask_in_col: Vec<bool> = if let Some(m) = mask_in {
-            (0..n).map(|k| m[[k, i, j]]).collect()
-        } else {
-            vec![false; n]
-        };
-        let mut out_col = vec![false; n];
-        let mut restored_col = vec![0_u8; n];
-        let mut buf = Vec::<f64>::with_capacity(n);
-        let mut pixel_scratch = SigClipPixelScratch::new();
+    let compute_pixel = |scratch: &mut SigClipResultScratch<T>, idx: usize| {
+        scratch.ensure_len(n);
+        let mut raw_idx = idx;
+        for k in 0..n {
+            let value = data[raw_idx];
+            scratch.col[k] = if p.ccdclip && p.rejection_gain != 1.0 {
+                T::from_f64(value.to_f64() / p.rejection_gain)
+            } else {
+                value
+            };
+            scratch.mask_in_col[k] = mask_data.is_some_and(|m| m[raw_idx]);
+            raw_idx += hw;
+        }
         sigclip_pixel(
-            &col,
-            &mask_in_col,
+            &scratch.col,
+            &scratch.mask_in_col,
             p,
             false,
-            &mut buf,
-            &mut out_col,
-            Some(&mut restored_col),
-            &mut pixel_scratch,
+            &mut scratch.stat_buf,
+            &mut scratch.out_mask,
+            Some(&mut scratch.restored_col),
+            &mut scratch.pixel,
         );
-        Px {
-            flags_col: restored_col,
-        }
+        scratch.restored_col.clone()
     };
 
-    let results: Vec<Px> = if hw >= parallel_threshold() {
-        (0..hw).into_par_iter().map(compute_pixel).collect()
+    let results: Vec<Vec<u8>> = if hw >= parallel_threshold() {
+        (0..hw)
+            .into_par_iter()
+            .map_init(
+                || SigClipResultScratch::<T>::with_capacity(n),
+                compute_pixel,
+            )
+            .collect()
     } else {
-        (0..hw).map(compute_pixel).collect()
+        let mut scratch = SigClipResultScratch::<T>::with_capacity(n);
+        (0..hw)
+            .map(|idx| compute_pixel(&mut scratch, idx))
+            .collect()
     };
 
     let flags_slice = flags_out
@@ -1120,8 +1450,8 @@ pub fn sigclip_restored_flags<T: Float>(
         .expect("sigclip restored-flags output must be contiguous");
     for k in 0..n {
         let plane_offset = k * hw;
-        for (idx, r) in results.iter().enumerate() {
-            flags_slice[plane_offset + idx] = r.flags_col[k];
+        for (idx, flags_col) in results.iter().enumerate() {
+            flags_slice[plane_offset + idx] = flags_col[k];
         }
     }
 
@@ -1145,6 +1475,10 @@ fn sigclip_impl<T: Float>(
 
     // Build per-pixel work units sequentially indexed; rayon over (h*w).
     let hw = h * w;
+    let data = arr
+        .as_slice_memory_order()
+        .expect("sigclip kernel requires contiguous C-order arrays");
+    let mask_data = mask_in.and_then(|m| m.as_slice_memory_order());
 
     // We need mutable access to disjoint output positions of mask_out: walk by (i, j) and
     // produce results, then write them into output arrays sequentially. To keep
@@ -1158,41 +1492,31 @@ fn sigclip_impl<T: Float>(
         output_flags: u8,
     }
 
-    let compute_pixel = |idx: usize| {
-        let i = idx / w;
-        let j = idx % w;
-        let mut col: Vec<T> = (0..n)
-            .map(|k| {
-                let value = arr[[k, i, j]];
-                if p.ccdclip && p.rejection_gain != 1.0 {
-                    T::from_f64(value.to_f64() / p.rejection_gain)
-                } else {
-                    value
-                }
-            })
-            .collect();
-        let mask_in_col: Vec<bool> = if let Some(m) = mask_in {
-            (0..n).map(|k| m[[k, i, j]]).collect()
-        } else {
-            vec![false; n]
-        };
-        let mut out_col = vec![false; n];
-        let mut buf = Vec::<f64>::with_capacity(n);
-        let mut pixel_scratch = SigClipPixelScratch::new();
+    let compute_pixel = |scratch: &mut SigClipResultScratch<T>, idx: usize| {
+        scratch.ensure_len(n);
+        let mut raw_idx = idx;
+        for k in 0..n {
+            let value = data[raw_idx];
+            scratch.col[k] = if p.ccdclip && p.rejection_gain != 1.0 {
+                T::from_f64(value.to_f64() / p.rejection_gain)
+            } else {
+                value
+            };
+            scratch.mask_in_col[k] = mask_data.is_some_and(|m| m[raw_idx]);
+            raw_idx += hw;
+        }
         let px = sigclip_pixel(
-            &col,
-            &mask_in_col,
+            &scratch.col,
+            &scratch.mask_in_col,
             p,
             diagnostics,
-            &mut buf,
-            &mut out_col,
+            &mut scratch.stat_buf,
+            &mut scratch.out_mask,
             None,
-            &mut pixel_scratch,
+            &mut scratch.pixel,
         );
-        // suppress unused-mut warning
-        col.clear();
         Px {
-            mask_col: out_col,
+            mask_col: scratch.out_mask.clone(),
             low: px.low,
             upp: px.upp,
             std: px.std,
@@ -1202,9 +1526,18 @@ fn sigclip_impl<T: Float>(
     };
 
     let results: Vec<Px<T>> = if hw >= parallel_threshold() {
-        (0..hw).into_par_iter().map(compute_pixel).collect()
+        (0..hw)
+            .into_par_iter()
+            .map_init(
+                || SigClipResultScratch::<T>::with_capacity(n),
+                compute_pixel,
+            )
+            .collect()
     } else {
-        (0..hw).map(compute_pixel).collect()
+        let mut scratch = SigClipResultScratch::<T>::with_capacity(n);
+        (0..hw)
+            .map(|idx| compute_pixel(&mut scratch, idx))
+            .collect()
     };
 
     let mask_slice = mask_out
@@ -1263,6 +1596,36 @@ fn sigclip_impl<T: Float>(
 
 // ---------- minmax ----------
 
+fn apply_minmax_pairs<T: Float>(
+    finite_pairs: &mut [(T, usize)],
+    mask: &mut [bool],
+    q_low: f64,
+    q_upp: f64,
+    diagnostics: bool,
+) -> (T, T) {
+    let n_finite = finite_pairs.len();
+    let n_rej_low = (n_finite as f64 * q_low + 0.001) as usize;
+    let n_rej_upp = (n_finite as f64 * q_upp + 0.001) as usize;
+
+    finite_pairs.sort_by(cmp_pair_t);
+    for &(_, k) in finite_pairs.iter().take(n_rej_low.min(n_finite)) {
+        mask[k] = true;
+    }
+    let high_count = n_rej_upp.min(n_finite.saturating_sub(n_rej_low));
+    for &(_, k) in finite_pairs.iter().rev().take(high_count) {
+        mask[k] = true;
+    }
+
+    if diagnostics && n_rej_low + high_count < n_finite {
+        (
+            finite_pairs[n_rej_low].0,
+            finite_pairs[n_finite - high_count - 1].0,
+        )
+    } else {
+        (T::nan(), T::nan())
+    }
+}
+
 /// Per-pixel minmax rejection: reject `n_rej_low` smallest and `n_rej_upp` largest
 /// of finite, unmasked values. Counts are derived per-pixel from the IRAF formula
 /// `int(n_finite * q + 0.001)` so that `q_low`/`q_upp` express *fractions*; pass
@@ -1294,46 +1657,27 @@ pub fn minmax<T: Float>(
         output_flags: u8,
     }
 
-    let compute_pixel = |idx: usize| {
-        let mut mask = vec![false; n];
-        let mut finite_pairs: Vec<(T, usize)> = Vec::with_capacity(n);
-        let mut n_finite = 0usize;
+    let compute_pixel = |scratch: &mut RankCombineScratch<T>, idx: usize| {
+        scratch.ensure_len(n);
+        scratch.pairs_t.clear();
         let mut pre_masked = false;
-        for (k, mask_k) in mask.iter_mut().enumerate() {
-            let raw_idx = flat_index(k, idx, hw);
+        let mut raw_idx = idx;
+        for k in 0..n {
             let x = data[raw_idx];
             let masked_by_input = mask_data.is_some_and(|m| m[raw_idx]);
             pre_masked |= masked_by_input;
             let masked = masked_by_input || !x.is_finite();
-            if masked {
-                *mask_k = true;
-            } else {
-                finite_pairs.push((x, k));
-                n_finite += 1;
+            scratch.mask[k] = masked;
+            if !masked {
+                scratch.pairs_t.push((x, k));
             }
+            raw_idx += hw;
         }
-        let n_rej_low = (n_finite as f64 * q_low + 0.001) as usize;
-        let n_rej_upp = (n_finite as f64 * q_upp + 0.001) as usize;
-
-        finite_pairs.sort_by(cmp_pair_t);
-        for &(_, k) in finite_pairs.iter().take(n_rej_low.min(n_finite)) {
-            mask[k] = true;
-        }
-        let high_count = n_rej_upp.min(n_finite.saturating_sub(n_rej_low));
-        for &(_, k) in finite_pairs.iter().rev().take(high_count) {
-            mask[k] = true;
-        }
-        let (lo, up) = if n_rej_low + high_count < n_finite {
-            (
-                finite_pairs[n_rej_low].0,
-                finite_pairs[n_finite - high_count - 1].0,
-            )
-        } else {
-            (T::nan(), T::nan())
-        };
+        let (lo, up) =
+            apply_minmax_pairs(&mut scratch.pairs_t, &mut scratch.mask, q_low, q_upp, true);
         let c: u8 = pre_masked as u8;
         Px {
-            mask_col: mask,
+            mask_col: scratch.mask.clone(),
             low: lo,
             upp: up,
             output_flags: c,
@@ -1341,9 +1685,15 @@ pub fn minmax<T: Float>(
     };
 
     let results: Vec<Px<T>> = if hw >= parallel_threshold() {
-        (0..hw).into_par_iter().map(compute_pixel).collect()
+        (0..hw)
+            .into_par_iter()
+            .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
+            .collect()
     } else {
-        (0..hw).map(compute_pixel).collect()
+        let mut scratch = RankCombineScratch::<T>::with_capacity(n);
+        (0..hw)
+            .map(|idx| compute_pixel(&mut scratch, idx))
+            .collect()
     };
 
     let mask_slice = mask_out
@@ -1395,40 +1745,34 @@ pub fn minmax_mask<T: Float>(
         .expect("minmax kernel requires contiguous C-order arrays");
     let mask_data = mask_in.and_then(|m| m.as_slice_memory_order());
 
-    let compute_pixel = |idx: usize| {
-        let mut mask = vec![false; n];
-        let mut finite_pairs: Vec<(T, usize)> = Vec::with_capacity(n);
-        let mut n_finite = 0usize;
-        for (k, mask_k) in mask.iter_mut().enumerate() {
-            let raw_idx = flat_index(k, idx, hw);
+    let compute_pixel = |scratch: &mut RankCombineScratch<T>, idx: usize| {
+        scratch.ensure_len(n);
+        scratch.pairs_t.clear();
+        let mut raw_idx = idx;
+        for k in 0..n {
             let x = data[raw_idx];
             let masked_by_input = mask_data.is_some_and(|m| m[raw_idx]);
             let masked = masked_by_input || !x.is_finite();
-            if masked {
-                *mask_k = true;
-            } else {
-                finite_pairs.push((x, k));
-                n_finite += 1;
+            scratch.mask[k] = masked;
+            if !masked {
+                scratch.pairs_t.push((x, k));
             }
+            raw_idx += hw;
         }
-        let n_rej_low = (n_finite as f64 * q_low + 0.001) as usize;
-        let n_rej_upp = (n_finite as f64 * q_upp + 0.001) as usize;
-
-        finite_pairs.sort_by(cmp_pair_t);
-        for &(_, k) in finite_pairs.iter().take(n_rej_low.min(n_finite)) {
-            mask[k] = true;
-        }
-        let high_count = n_rej_upp.min(n_finite.saturating_sub(n_rej_low));
-        for &(_, k) in finite_pairs.iter().rev().take(high_count) {
-            mask[k] = true;
-        }
-        mask
+        apply_minmax_pairs(&mut scratch.pairs_t, &mut scratch.mask, q_low, q_upp, false);
+        scratch.mask.clone()
     };
 
     let results: Vec<Vec<bool>> = if hw >= parallel_threshold() {
-        (0..hw).into_par_iter().map(compute_pixel).collect()
+        (0..hw)
+            .into_par_iter()
+            .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
+            .collect()
     } else {
-        (0..hw).map(compute_pixel).collect()
+        let mut scratch = RankCombineScratch::<T>::with_capacity(n);
+        (0..hw)
+            .map(|idx| compute_pixel(&mut scratch, idx))
+            .collect()
     };
 
     let mask_slice = mask_out
@@ -1444,29 +1788,79 @@ pub fn minmax_mask<T: Float>(
     mask_out
 }
 
+fn minmax_mask_and_bounds_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    q_low: f64,
+    q_upp: f64,
+    diagnostics: bool,
+) -> (Vec<bool>, T, T, u8) {
+    let n = values.len();
+    let mut mask = vec![false; n];
+    let mut finite_pairs: Vec<(T, usize)> = Vec::with_capacity(n);
+    let mut pre_masked = false;
+    for (k, &x) in values.iter().enumerate() {
+        let masked_by_input = mask_in.is_some_and(|m| m[k]);
+        pre_masked |= masked_by_input;
+        let masked = masked_by_input || !x.is_finite();
+        if masked {
+            mask[k] = true;
+        } else {
+            finite_pairs.push((x, k));
+        }
+    }
+
+    let (low, upp) = apply_minmax_pairs(&mut finite_pairs, &mut mask, q_low, q_upp, diagnostics);
+    (mask, low, upp, pre_masked as u8)
+}
+
+pub fn minmax_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    q_low: f64,
+    q_upp: f64,
+) -> RejectOutput1d<T> {
+    let (mask, low, upp, output_flags) =
+        minmax_mask_and_bounds_1d(values, mask_in, q_low, q_upp, true);
+    RejectOutput1d {
+        mask,
+        low,
+        upp,
+        nit: 1,
+        output_flags,
+        std: T::nan(),
+    }
+}
+
+pub fn minmax_mask_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    q_low: f64,
+    q_upp: f64,
+) -> Vec<bool> {
+    minmax_mask_and_bounds_1d(values, mask_in, q_low, q_upp, false).0
+}
+
 struct RankCombineScratch<T: Float> {
-    source_col: Vec<T>,
     mask: Vec<bool>,
     pairs_t: Vec<(T, usize)>,
     pairs_f64: Vec<(f64, usize)>,
-    resid: Vec<f64>,
     stat_buf: Vec<f64>,
+    resid: Vec<f64>,
 }
 
 impl<T: Float> RankCombineScratch<T> {
     fn with_capacity(n: usize) -> Self {
         Self {
-            source_col: vec![T::zero(); n],
             mask: vec![false; n],
             pairs_t: Vec::with_capacity(n),
             pairs_f64: Vec::with_capacity(n),
-            resid: Vec::with_capacity(n),
             stat_buf: Vec::with_capacity(n),
+            resid: Vec::with_capacity(n),
         }
     }
 
     fn ensure_len(&mut self, n: usize) {
-        self.source_col.resize(n, T::zero());
         self.mask.resize(n, false);
     }
 }
@@ -1488,33 +1882,21 @@ fn minmax_final_combine<T: Float>(
     let compute_pixel = |scratch: &mut RankCombineScratch<T>, idx: usize| {
         scratch.ensure_len(n);
         scratch.pairs_t.clear();
-        let mut n_finite = 0usize;
+        let mut raw_idx = idx;
         for k in 0..n {
-            let raw_idx = flat_index(k, idx, hw);
             let x = data[raw_idx];
-            scratch.source_col[k] = x;
             let masked_by_input = mask_data.is_some_and(|m| m[raw_idx]);
             let masked = masked_by_input || !x.is_finite();
             scratch.mask[k] = masked;
             if !masked {
                 scratch.pairs_t.push((x, k));
-                n_finite += 1;
             }
+            raw_idx += hw;
         }
-        let n_rej_low = (n_finite as f64 * q_low + 0.001) as usize;
-        let n_rej_upp = (n_finite as f64 * q_upp + 0.001) as usize;
+        apply_minmax_pairs(&mut scratch.pairs_t, &mut scratch.mask, q_low, q_upp, false);
 
-        scratch.pairs_t.sort_by(cmp_pair_t);
-        for &(_, k) in scratch.pairs_t.iter().take(n_rej_low.min(n_finite)) {
-            scratch.mask[k] = true;
-        }
-        let high_count = n_rej_upp.min(n_finite.saturating_sub(n_rej_low));
-        for &(_, k) in scratch.pairs_t.iter().rev().take(high_count) {
-            scratch.mask[k] = true;
-        }
-
-        final_combine(
-            &scratch.source_col,
+        final_combine_from_sorted_pairs_t(
+            &scratch.pairs_t,
             &scratch.mask,
             kind,
             &mut scratch.stat_buf,
@@ -1554,6 +1936,47 @@ pub fn minmax_median<T: Float>(
     minmax_final_combine(arr, mask_in, q_low, q_upp, FinalCombineKind::Median)
 }
 
+fn minmax_final_combine_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    q_low: f64,
+    q_upp: f64,
+    kind: FinalCombineKind,
+) -> T {
+    let n = values.len();
+    let mut mask = vec![false; n];
+    let mut pairs: Vec<(T, usize)> = Vec::with_capacity(n);
+    for (k, &x) in values.iter().enumerate() {
+        let masked = mask_in.is_some_and(|m| m[k]) || !x.is_finite();
+        mask[k] = masked;
+        if !masked {
+            pairs.push((x, k));
+        }
+    }
+
+    apply_minmax_pairs(&mut pairs, &mut mask, q_low, q_upp, false);
+    let mut stat_buf = Vec::<f64>::with_capacity(n);
+    final_combine_from_sorted_pairs_t(&pairs, &mask, kind, &mut stat_buf)
+}
+
+pub fn minmax_mean_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    q_low: f64,
+    q_upp: f64,
+) -> T {
+    minmax_final_combine_1d(values, mask_in, q_low, q_upp, FinalCombineKind::Mean)
+}
+
+pub fn minmax_median_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    q_low: f64,
+    q_upp: f64,
+) -> T {
+    minmax_final_combine_1d(values, mask_in, q_low, q_upp, FinalCombineKind::Median)
+}
+
 // ---------- pclip ----------
 
 const MINCLIP: usize = 3;
@@ -1584,41 +2007,23 @@ fn iraf_nint(x: f64) -> isize {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn pclip_pixel<T: Float>(
-    data: &[T],
-    mask_data: Option<&[bool]>,
-    idx: usize,
-    hw: usize,
-    nimages: usize,
+fn apply_pclip_pairs<T: Float>(
+    pairs: &mut Vec<(f64, usize)>,
+    mask: &mut [bool],
+    resid: &mut Vec<f64>,
     pclip_offset: isize,
     sigma_lower: f64,
     sigma_upper: f64,
     nkeep: usize,
     diagnostics: bool,
-) -> (Vec<bool>, T, T, u8) {
-    let mut mask = vec![false; nimages];
-    let mut pairs: Vec<(f64, usize)> = Vec::with_capacity(nimages);
-    let mut pre_masked = false;
-    for (k, mask_k) in mask.iter_mut().enumerate() {
-        let raw_idx = flat_index(k, idx, hw);
-        let x = data[raw_idx];
-        let masked_by_input = mask_data.is_some_and(|m| m[raw_idx]);
-        pre_masked |= masked_by_input;
-        if masked_by_input || !x.is_finite() {
-            *mask_k = true;
-        } else {
-            pairs.push((x.to_f64(), k));
-        }
-    }
-
+) -> (T, T) {
     let n_total = pairs.len();
     if n_total == 0 || n_total < MINCLIP || n_total < nkeep.saturating_add(1) {
-        let (low, upp) = if diagnostics {
-            col_minmax_from_masked_pairs::<T>(&pairs, &mask)
+        return if diagnostics {
+            col_minmax_from_masked_pairs::<T>(pairs, mask)
         } else {
             (T::nan(), T::nan())
         };
-        return (mask, low, upp, pre_masked as u8);
     }
 
     pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -1644,15 +2049,15 @@ fn pclip_pixel<T: Float>(
     let sign = if pclip_offset < 0 { -1.0 } else { 1.0 };
     let sigma = sign * (pairs[n3_1based - 1].0 - med);
     if sigma == 0.0 {
-        let (low, upp) = if diagnostics {
-            col_minmax_from_masked_pairs::<T>(&pairs, &mask)
+        return if diagnostics {
+            col_minmax_from_masked_pairs::<T>(pairs, mask)
         } else {
             (T::nan(), T::nan())
         };
-        return (mask, low, upp, pre_masked as u8);
     }
 
-    let mut resid = vec![0.0_f64; n_total];
+    resid.clear();
+    resid.resize(n_total, 0.0);
     let mut nl = 0usize;
     while nl < n_total {
         let r = (med - pairs[nl].0) / sigma;
@@ -1717,11 +2122,48 @@ fn pclip_pixel<T: Float>(
         }
     }
 
-    let (low, upp) = if diagnostics {
-        col_minmax_from_masked_pairs::<T>(&pairs, &mask)
+    if diagnostics {
+        col_minmax_from_masked_pairs::<T>(pairs, mask)
     } else {
         (T::nan(), T::nan())
-    };
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pclip_values<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    pclip_offset: isize,
+    sigma_lower: f64,
+    sigma_upper: f64,
+    nkeep: usize,
+    diagnostics: bool,
+) -> (Vec<bool>, T, T, u8) {
+    let nimages = values.len();
+    let mut mask = vec![false; nimages];
+    let mut pairs: Vec<(f64, usize)> = Vec::with_capacity(nimages);
+    let mut resid = Vec::<f64>::with_capacity(nimages);
+    let mut pre_masked = false;
+    for (k, &x) in values.iter().enumerate() {
+        let masked_by_input = mask_in.is_some_and(|m| m[k]);
+        pre_masked |= masked_by_input;
+        if masked_by_input || !x.is_finite() {
+            mask[k] = true;
+        } else {
+            pairs.push((x.to_f64(), k));
+        }
+    }
+
+    let (low, upp) = apply_pclip_pairs(
+        &mut pairs,
+        &mut mask,
+        &mut resid,
+        pclip_offset,
+        sigma_lower,
+        sigma_upper,
+        nkeep,
+        diagnostics,
+    );
     (mask, low, upp, pre_masked as u8)
 }
 
@@ -1773,13 +2215,26 @@ pub fn pclip<T: Float>(
         output_flags: u8,
     }
 
-    let compute_pixel = |idx: usize| {
-        let (mask, lo, up, output_flags) = pclip_pixel(
-            data,
-            mask_data,
-            idx,
-            hw,
-            n,
+    let compute_pixel = |scratch: &mut RankCombineScratch<T>, idx: usize| {
+        scratch.ensure_len(n);
+        scratch.pairs_f64.clear();
+        let mut pre_masked = false;
+        let mut raw_idx = idx;
+        for k in 0..n {
+            let x = data[raw_idx];
+            let masked_by_input = mask_data.is_some_and(|m| m[raw_idx]);
+            pre_masked |= masked_by_input;
+            let masked = masked_by_input || !x.is_finite();
+            scratch.mask[k] = masked;
+            if !masked {
+                scratch.pairs_f64.push((x.to_f64(), k));
+            }
+            raw_idx += hw;
+        }
+        let (lo, up) = apply_pclip_pairs(
+            &mut scratch.pairs_f64,
+            &mut scratch.mask,
+            &mut scratch.resid,
             pclip_offset,
             sigma_lower,
             sigma_upper,
@@ -1787,17 +2242,23 @@ pub fn pclip<T: Float>(
             true,
         );
         Px {
-            mask_col: mask,
+            mask_col: scratch.mask.clone(),
             low: lo,
             upp: up,
-            output_flags,
+            output_flags: pre_masked as u8,
         }
     };
 
     let results: Vec<Px<T>> = if hw >= parallel_threshold() {
-        (0..hw).into_par_iter().map(compute_pixel).collect()
+        (0..hw)
+            .into_par_iter()
+            .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
+            .collect()
     } else {
-        (0..hw).map(compute_pixel).collect()
+        let mut scratch = RankCombineScratch::<T>::with_capacity(n);
+        (0..hw)
+            .map(|idx| compute_pixel(&mut scratch, idx))
+            .collect()
     };
 
     let mask_slice = mask_out
@@ -1852,26 +2313,43 @@ pub fn pclip_mask<T: Float>(
     let mask_data = mask_in.and_then(|m| m.as_slice_memory_order());
     let pclip_offset = iraf_pclip_offset(pclip, n);
 
-    let compute_pixel = |idx: usize| {
-        let (mask, _, _, _) = pclip_pixel(
-            data,
-            mask_data,
-            idx,
-            hw,
-            n,
+    let compute_pixel = |scratch: &mut RankCombineScratch<T>, idx: usize| {
+        scratch.ensure_len(n);
+        scratch.pairs_f64.clear();
+        let mut raw_idx = idx;
+        for k in 0..n {
+            let x = data[raw_idx];
+            let masked_by_input = mask_data.is_some_and(|m| m[raw_idx]);
+            let masked = masked_by_input || !x.is_finite();
+            scratch.mask[k] = masked;
+            if !masked {
+                scratch.pairs_f64.push((x.to_f64(), k));
+            }
+            raw_idx += hw;
+        }
+        apply_pclip_pairs::<T>(
+            &mut scratch.pairs_f64,
+            &mut scratch.mask,
+            &mut scratch.resid,
             pclip_offset,
             sigma_lower,
             sigma_upper,
             nkeep,
             false,
         );
-        mask
+        scratch.mask.clone()
     };
 
     let results: Vec<Vec<bool>> = if hw >= parallel_threshold() {
-        (0..hw).into_par_iter().map(compute_pixel).collect()
+        (0..hw)
+            .into_par_iter()
+            .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
+            .collect()
     } else {
-        (0..hw).map(compute_pixel).collect()
+        let mut scratch = RankCombineScratch::<T>::with_capacity(n);
+        (0..hw)
+            .map(|idx| compute_pixel(&mut scratch, idx))
+            .collect()
     };
 
     let mask_slice = mask_out
@@ -1885,6 +2363,55 @@ pub fn pclip_mask<T: Float>(
     }
 
     mask_out
+}
+
+pub fn pclip_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    pclip: f64,
+    sigma_lower: f64,
+    sigma_upper: f64,
+    nkeep: usize,
+) -> RejectOutput1d<T> {
+    let pclip_offset = iraf_pclip_offset(pclip, values.len());
+    let (mask, low, upp, output_flags) = pclip_values(
+        values,
+        mask_in,
+        pclip_offset,
+        sigma_lower,
+        sigma_upper,
+        nkeep,
+        true,
+    );
+    RejectOutput1d {
+        mask,
+        low,
+        upp,
+        nit: 1,
+        output_flags,
+        std: T::nan(),
+    }
+}
+
+pub fn pclip_mask_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    pclip: f64,
+    sigma_lower: f64,
+    sigma_upper: f64,
+    nkeep: usize,
+) -> Vec<bool> {
+    let pclip_offset = iraf_pclip_offset(pclip, values.len());
+    pclip_values(
+        values,
+        mask_in,
+        pclip_offset,
+        sigma_lower,
+        sigma_upper,
+        nkeep,
+        false,
+    )
+    .0
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1908,113 +2435,31 @@ fn pclip_final_combine<T: Float>(
     let compute_pixel = |scratch: &mut RankCombineScratch<T>, idx: usize| {
         scratch.ensure_len(n);
         scratch.pairs_f64.clear();
+        let mut raw_idx = idx;
         for k in 0..n {
-            let raw_idx = flat_index(k, idx, hw);
             let x = data[raw_idx];
-            scratch.source_col[k] = x;
             let masked_by_input = mask_data.is_some_and(|m| m[raw_idx]);
             let masked = masked_by_input || !x.is_finite();
             scratch.mask[k] = masked;
             if !masked {
                 scratch.pairs_f64.push((x.to_f64(), k));
             }
+            raw_idx += hw;
         }
 
-        let n_total = scratch.pairs_f64.len();
-        if n_total >= MINCLIP && n_total >= nkeep.saturating_add(1) {
-            scratch.pairs_f64.sort_by(|a, b| a.0.total_cmp(&b.0));
+        apply_pclip_pairs::<T>(
+            &mut scratch.pairs_f64,
+            &mut scratch.mask,
+            &mut scratch.resid,
+            pclip_offset,
+            sigma_lower,
+            sigma_upper,
+            nkeep,
+            false,
+        );
 
-            let n2_1based = 1 + n_total / 2;
-            let even = n_total % 2 == 0;
-            let med = if even {
-                (scratch.pairs_f64[n2_1based - 2].0 + scratch.pairs_f64[n2_1based - 1].0) / 2.0
-            } else {
-                scratch.pairs_f64[n2_1based - 1].0
-            };
-
-            let n3_1based = if pclip_offset < 0 {
-                let base = if even { n2_1based - 1 } else { n2_1based };
-                iraf_nint(base as f64 + pclip_offset as f64)
-                    .max(1)
-                    .min(n_total as isize) as usize
-            } else {
-                iraf_nint(n2_1based as f64 + pclip_offset as f64)
-                    .max(1)
-                    .min(n_total as isize) as usize
-            };
-            let sign = if pclip_offset < 0 { -1.0 } else { 1.0 };
-            let sigma = sign * (scratch.pairs_f64[n3_1based - 1].0 - med);
-
-            if sigma != 0.0 {
-                scratch.resid.resize(n_total, 0.0);
-                let mut nl = 0usize;
-                while nl < n_total {
-                    let r = (med - scratch.pairs_f64[nl].0) / sigma;
-                    if r < sigma_lower {
-                        break;
-                    }
-                    scratch.resid[nl] = r;
-                    nl += 1;
-                }
-                let mut nh = n_total - 1;
-                loop {
-                    if nh < nl {
-                        break;
-                    }
-                    let r = (scratch.pairs_f64[nh].0 - med) / sigma;
-                    if r < sigma_upper {
-                        break;
-                    }
-                    scratch.resid[nh] = r;
-                    if nh == 0 {
-                        break;
-                    }
-                    nh -= 1;
-                }
-
-                let maxkeep = nkeep.min(n_total);
-                let mut n_kept = if nh >= nl { nh - nl + 1 } else { 0 };
-                while n_kept < maxkeep {
-                    if nl == 0 {
-                        nh += 1;
-                    } else if nh + 1 == n_total {
-                        nl -= 1;
-                    } else {
-                        let r = scratch.resid[nl - 1];
-                        let s = scratch.resid[nh + 1];
-                        if r < s {
-                            nl -= 1;
-                            let r_tol = r + IRAF_RESID_TOL;
-                            if s <= r_tol {
-                                nh += 1;
-                            }
-                            if nl > 0 && scratch.resid[nl - 1] <= r_tol {
-                                nl -= 1;
-                            }
-                        } else {
-                            nh += 1;
-                            let s_tol = s + IRAF_RESID_TOL;
-                            if r <= s_tol {
-                                nl -= 1;
-                            }
-                            if nh + 1 < n_total && scratch.resid[nh + 1] <= s_tol {
-                                nh += 1;
-                            }
-                        }
-                    }
-                    n_kept = nh - nl + 1;
-                }
-
-                for (rank, &(_, k)) in scratch.pairs_f64.iter().enumerate() {
-                    if rank < nl || rank > nh {
-                        scratch.mask[k] = true;
-                    }
-                }
-            }
-        }
-
-        final_combine(
-            &scratch.source_col,
+        final_combine_from_sorted_pairs_f64(
+            &scratch.pairs_f64,
             &scratch.mask,
             kind,
             &mut scratch.stat_buf,
@@ -2065,6 +2510,79 @@ pub fn pclip_median<T: Float>(
 ) -> Array2<T> {
     pclip_final_combine(
         arr,
+        mask_in,
+        pclip,
+        sigma_lower,
+        sigma_upper,
+        nkeep,
+        FinalCombineKind::Median,
+    )
+}
+
+fn pclip_final_combine_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    pclip: f64,
+    sigma_lower: f64,
+    sigma_upper: f64,
+    nkeep: usize,
+    kind: FinalCombineKind,
+) -> T {
+    let n = values.len();
+    let pclip_offset = iraf_pclip_offset(pclip, n);
+    let mut mask = vec![false; n];
+    let mut pairs: Vec<(f64, usize)> = Vec::with_capacity(n);
+    for (k, &x) in values.iter().enumerate() {
+        let masked = mask_in.is_some_and(|m| m[k]) || !x.is_finite();
+        mask[k] = masked;
+        if !masked {
+            pairs.push((x.to_f64(), k));
+        }
+    }
+    let mut resid = Vec::<f64>::with_capacity(n);
+    apply_pclip_pairs::<T>(
+        &mut pairs,
+        &mut mask,
+        &mut resid,
+        pclip_offset,
+        sigma_lower,
+        sigma_upper,
+        nkeep,
+        false,
+    );
+    let mut stat_buf = Vec::<f64>::with_capacity(n);
+    final_combine_from_sorted_pairs_f64(&pairs, &mask, kind, &mut stat_buf)
+}
+
+pub fn pclip_mean_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    pclip: f64,
+    sigma_lower: f64,
+    sigma_upper: f64,
+    nkeep: usize,
+) -> T {
+    pclip_final_combine_1d(
+        values,
+        mask_in,
+        pclip,
+        sigma_lower,
+        sigma_upper,
+        nkeep,
+        FinalCombineKind::Mean,
+    )
+}
+
+pub fn pclip_median_1d<T: Float>(
+    values: &[T],
+    mask_in: Option<&[bool]>,
+    pclip: f64,
+    sigma_lower: f64,
+    sigma_upper: f64,
+    nkeep: usize,
+) -> T {
+    pclip_final_combine_1d(
+        values,
         mask_in,
         pclip,
         sigma_lower,

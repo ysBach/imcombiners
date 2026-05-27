@@ -4,7 +4,12 @@ use numpy::{IntoPyArray, PyArray3, PyArrayMethods, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::kernel::combine::{combine_axis0, lmedian_axis0_ord, CombineKind};
+use crate::kernel::combine::{
+    combine_axis0, lmedian_1d as k_lmedian_1d, lmedian_axis0_ord, max_1d as k_max_1d,
+    mean_1d as k_mean_1d, median_1d as k_median_1d, min_1d as k_min_1d, sum_1d as k_sum_1d,
+    variance_1d as k_variance_1d, weighted_average_1d as k_weighted_average_1d, CombineKind,
+};
+use crate::kernel::utils::Float;
 
 use super::support::dispatch_combine;
 
@@ -17,6 +22,14 @@ pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(maximum, m)?)?;
     m.add_function(wrap_pyfunction!(variance, m)?)?;
     m.add_function(wrap_pyfunction!(weighted_average, m)?)?;
+    m.add_function(wrap_pyfunction!(mean_1d, m)?)?;
+    m.add_function(wrap_pyfunction!(median_1d, m)?)?;
+    m.add_function(wrap_pyfunction!(lmedian_1d, m)?)?;
+    m.add_function(wrap_pyfunction!(sum_1d, m)?)?;
+    m.add_function(wrap_pyfunction!(min_1d, m)?)?;
+    m.add_function(wrap_pyfunction!(max_1d, m)?)?;
+    m.add_function(wrap_pyfunction!(variance_1d, m)?)?;
+    m.add_function(wrap_pyfunction!(weighted_average_1d, m)?)?;
     // Compat shim with string dispatch (used by IRAF-style `ndcombine`).
     m.add_function(wrap_pyfunction!(combine, m)?)?;
     Ok(())
@@ -82,6 +95,83 @@ fn lmedian<'py>(py: Python<'py>, arr: &Bound<'py, PyAny>) -> PyResult<Bound<'py,
             |v| combine_axis0::<f32>(&v, CombineKind::LMedian, None, 0),
             |v| combine_axis0::<f64>(&v, CombineKind::LMedian, None, 0),
         )
+    }
+}
+
+macro_rules! simple_combine_1d {
+    ($name:ident, $kernel:expr) => {
+        #[pyfunction]
+        #[pyo3(signature = (values))]
+        fn $name(values: &Bound<'_, PyAny>) -> PyResult<f64> {
+            if let Ok(a) = values.cast::<numpy::PyArray1<f32>>() {
+                let a = a.readonly();
+                let values = a.as_slice().unwrap();
+                validate_values_len(values.len())?;
+                Ok($kernel(values).to_f64())
+            } else if let Ok(a) = values.cast::<numpy::PyArray1<f64>>() {
+                let a = a.readonly();
+                let values = a.as_slice().unwrap();
+                validate_values_len(values.len())?;
+                Ok($kernel(values).to_f64())
+            } else {
+                Err(pyo3::exceptions::PyTypeError::new_err(
+                    "values must be a 1-D float32 or float64 NumPy array",
+                ))
+            }
+        }
+    };
+}
+
+simple_combine_1d!(mean_1d, k_mean_1d);
+simple_combine_1d!(median_1d, k_median_1d);
+simple_combine_1d!(lmedian_1d, k_lmedian_1d);
+simple_combine_1d!(sum_1d, k_sum_1d);
+simple_combine_1d!(min_1d, k_min_1d);
+simple_combine_1d!(max_1d, k_max_1d);
+
+#[pyfunction]
+#[pyo3(signature = (values, *, ddof = 0))]
+fn variance_1d(values: &Bound<'_, PyAny>, ddof: usize) -> PyResult<f64> {
+    if let Ok(a) = values.cast::<numpy::PyArray1<f32>>() {
+        let a = a.readonly();
+        let values = a.as_slice().unwrap();
+        validate_values_len(values.len())?;
+        Ok(k_variance_1d(values, ddof).to_f64())
+    } else if let Ok(a) = values.cast::<numpy::PyArray1<f64>>() {
+        let a = a.readonly();
+        let values = a.as_slice().unwrap();
+        validate_values_len(values.len())?;
+        Ok(k_variance_1d(values, ddof).to_f64())
+    } else {
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "values must be a 1-D float32 or float64 NumPy array",
+        ))
+    }
+}
+
+#[pyfunction]
+#[pyo3(signature = (values, weights))]
+fn weighted_average_1d(
+    values: &Bound<'_, PyAny>,
+    weights: PyReadonlyArray1<'_, f64>,
+) -> PyResult<f64> {
+    let weights = weights.as_slice().unwrap();
+    if let Ok(a) = values.cast::<numpy::PyArray1<f32>>() {
+        let a = a.readonly();
+        let values = a.as_slice().unwrap();
+        validate_values_len(values.len())?;
+        validate_weights_len_1d(values.len(), weights.len())?;
+        Ok(k_weighted_average_1d(values, weights).to_f64())
+    } else if let Ok(a) = values.cast::<numpy::PyArray1<f64>>() {
+        let a = a.readonly();
+        let values = a.as_slice().unwrap();
+        validate_values_len(values.len())?;
+        validate_weights_len_1d(values.len(), weights.len())?;
+        Ok(k_weighted_average_1d(values, weights).to_f64())
+    } else {
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "values must be a 1-D float32 or float64 NumPy array",
+        ))
     }
 }
 
@@ -157,6 +247,25 @@ fn validate_weights_len(arr: &Bound<'_, PyAny>, weights_len: usize) -> PyResult<
     if weights_len != n {
         return Err(PyValueError::new_err(format!(
             "weights length must match stack size N={n}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_values_len(values_len: usize) -> PyResult<()> {
+    if values_len == 0 {
+        Err(PyValueError::new_err(
+            "values must contain at least one sample",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_weights_len_1d(values_len: usize, weights_len: usize) -> PyResult<()> {
+    if weights_len != values_len {
+        return Err(PyValueError::new_err(format!(
+            "weights length must match values length N={values_len}"
         )));
     }
     Ok(())

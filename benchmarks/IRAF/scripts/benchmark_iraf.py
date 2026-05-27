@@ -368,15 +368,14 @@ def _validate_outputs(
 _GROUP_HEADERS = ["group", "cases", "IRAF ms", "imc ms", "IRAF/imc"]
 _GROUP_ALIGN = ["<", ">", ">", ">", ">"]
 _CASE_HEADERS = [
+    "op",
     "dtype",
-    "variant",
-    "combine",
-    "reject",
-    "IRAF ms",
+    "N",
     "imc ms",
-    "IRAF/imc",
+    "IRAF ms",
+    "IRAF/imc (speedup)",
 ]
-_CASE_ALIGN = ["<", "<", "<", "<", ">", ">", ">"]
+_CASE_ALIGN = ["<", "<", ">", ">", ">", ">"]
 
 
 def _dw(cell: str) -> int:
@@ -458,16 +457,21 @@ def _markdown_case_table(rows: list[dict[str, Any]]) -> str:
     for row in rows:
         table_rows.append(
             [
+                str(row["op"]),
                 str(row["dtype"]),
-                str(row["variant"]),
-                str(row["combine"]),
-                str(row["reject"]),
-                _fmt_ms(row["iraf_median_s"]),
+                str(row["n"]),
                 _fmt_ms(row["imc_median_s"]),
+                _fmt_ms(row["iraf_median_s"]),
                 _fmt_ratio(_ratio(row["iraf_median_s"], row["imc_median_s"])),
             ]
         )
     return _table(_CASE_HEADERS, _CASE_ALIGN, table_rows)
+
+
+def _case_op(case: dict[str, Any]) -> str:
+    combine = str(case["imcombiners"]["combine"])
+    reject = str(case["imcombiners"].get("reject", "none"))
+    return combine if reject == "none" else f"{reject}_{combine}"
 
 
 def _benchmark_case(
@@ -509,7 +513,9 @@ def _benchmark_case(
 
     return {
         "case": case["name"],
+        "op": _case_op(case),
         "dtype": case["dtype"],
+        "n": len(case["inputs"]),
         "variant": case["variant"],
         "combine": case["iraf"]["combine"],
         "reject": case["iraf"]["reject"],
