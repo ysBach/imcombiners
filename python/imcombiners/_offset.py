@@ -6,8 +6,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 import numpy as np
-
-from . import _core
+from astro_ndslice.offset import offseted_shape, offsets2slice
 
 if TYPE_CHECKING:
     from numpy.typing import ArrayLike, NDArray
@@ -55,14 +54,6 @@ def _normalize_offset_images(
     return [np.ascontiguousarray(arr, dtype=dtype) for arr in arrays]
 
 
-def _validate_offsets(offsets: ArrayLike) -> NDArray:
-    """Validate integer offsets for all images."""
-    out = np.asarray(offsets)
-    if not np.issubdtype(out.dtype, np.integer):
-        raise TypeError(f"offsets must have integer dtype; got {out.dtype}")
-    return np.ascontiguousarray(out, dtype=np.int64)
-
-
 def place_into_padded(
     images: Iterable[ArrayLike],
     offsets: ArrayLike,
@@ -107,7 +98,10 @@ def place_into_padded(
     """
     if validate:
         images = _normalize_offset_images(images)
-        offsets = _validate_offsets(offsets)
+        offsets = np.asarray(offsets)
+        if not np.issubdtype(offsets.dtype, np.integer):
+            raise TypeError(f"offsets must have integer dtype; got {offsets.dtype}")
+        offsets = np.ascontiguousarray(offsets, dtype=np.int64)
     else:
         images = list(images)
         offsets = np.ascontiguousarray(offsets, dtype=np.int64)
@@ -116,4 +110,44 @@ def place_into_padded(
         raise ValueError(
             f"offsets shape must be ({len(images)}, {ndim}); got {offsets.shape}"
         )
-    return _core.place_into_padded(images, offsets, float(fill))
+
+    shapes = np.array([image.shape for image in images], dtype=np.int64)
+    int64_max = np.iinfo(np.int64).max
+    intp_max = np.iinfo(np.intp).max
+    min_offsets = offsets.min(axis=0)
+    for image_shape, offset in zip(shapes, offsets, strict=True):
+        for axis, (axis_len, raw_offset, min_offset) in enumerate(
+            zip(image_shape, offset, min_offsets, strict=True)
+        ):
+            label = "y" if axis == 0 else "x" if axis == 1 else f"axis {axis}"
+            start = int(raw_offset) - int(min_offset)
+            if start > int64_max:
+                raise ValueError(f"normalized {label} offset overflow")
+            if start > intp_max:
+                raise ValueError(f"normalized {label} offset does not fit usize")
+            if start + int(axis_len) > intp_max:
+                raise ValueError(f"padded output {label} overflow")
+
+    _, outer_shape = offseted_shape(
+        shapes,
+        offsets,
+        method="outer",
+        offset_order_xyz=False,
+        intify_offsets=True,
+        pythonize_offsets=True,
+    )
+    slices = offsets2slice(
+        shapes,
+        offsets,
+        method="outer",
+        shape_order_xyz=False,
+        offset_order_xyz=False,
+        outer_for_stack=False,
+        fits_convention=False,
+    )
+    padded = np.full((len(images), *outer_shape), fill, dtype=images[0].dtype)
+    for image_index, (image, image_slices) in enumerate(
+        zip(images, slices, strict=True)
+    ):
+        padded[(image_index, *image_slices)] = image
+    return padded

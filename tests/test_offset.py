@@ -86,6 +86,18 @@ def test_place_into_padded_preserves_float64_workspace():
     np.testing.assert_array_equal(out[1, 0, 1:], np.array([2.0], dtype=np.float64))
 
 
+def test_place_into_padded_uses_custom_fill_value():
+    img0 = np.array([[1.0, 2.0]], dtype=np.float32)
+    img1 = np.array([[3.0, 4.0]], dtype=np.float32)
+
+    out = place_into_padded([img0, img1], np.array([[0, 0], [1, 1]]), fill=-99.0)
+
+    expected = np.full((2, 2, 3), -99.0, dtype=np.float32)
+    expected[0, 0, 0:2] = img0
+    expected[1, 1, 1:3] = img1
+    np.testing.assert_array_equal(out, expected)
+
+
 def test_place_into_padded_rejects_offset_count_mismatch():
     img = np.ones((2, 2), dtype=np.float32)
 

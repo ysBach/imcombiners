@@ -5,6 +5,5 @@
 
 pub mod combine;
 pub mod mask;
-pub mod offset;
 pub mod reject;
 pub mod utils;
