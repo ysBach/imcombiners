@@ -13,6 +13,7 @@ kernels.sigclip_combine(
     maxrej=None,
     cenfunc='median',
     clip_cen=None,
+    stdfunc='std',
     revert_on_nkeep=True,
     validate=True,
 )

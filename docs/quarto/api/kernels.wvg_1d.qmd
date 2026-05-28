@@ -1,0 +1,7 @@
+# kernels.wvg_1d { #imcombiners.kernels.wvg_1d }
+
+```python
+kernels.wvg_1d(values, weights, *, validate=True)
+```
+
+Return the NaN-aware weighted average of a 1-D value vector.

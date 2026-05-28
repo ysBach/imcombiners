@@ -37,7 +37,7 @@ CCD noise-model clipping.
 
 <code>[**sigma**]{.parameter-name} [:]{.parameter-annotation-sep} [float or tuple of float]{.parameter-annotation} [ = ]{.parameter-default-sep} [(3.0, 3.0)]{.parameter-default}</code>
 
-:   Clipping threshold in units of the per-pixel std. A scalar applies the same value to both tails; a 2-tuple ``(sigma_lower, sigma_upper)`` clips asymmetrically.
+:   User-supplied clipping multiplier, not the measured data spread itself. Values are clipped when their residual from the clipping center exceeds ``sigma * spread``. A scalar applies the same multiplier to both tails; a 2-tuple ``(sigma_lower, sigma_upper)`` clips asymmetrically. Thresholds must be finite and non-negative.
 
 <code>[**maxiters**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [5]{.parameter-default}</code>
 
@@ -45,7 +45,7 @@ CCD noise-model clipping.
 
 <code>[**ddof**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [0]{.parameter-default}</code>
 
-:   Delta degrees of freedom for the per-pixel std.
+:   Delta degrees of freedom for the per-pixel spread estimator.
 
 <code>[**nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
 

@@ -1,0 +1,7 @@
+# kernels.lmedian_1d { #imcombiners.kernels.lmedian_1d }
+
+```python
+kernels.lmedian_1d(values, *, validate=True)
+```
+
+Return the NaN-aware lower median of a 1-D value vector.

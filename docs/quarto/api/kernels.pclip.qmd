@@ -31,7 +31,7 @@ IRAF-style percentile clipping at each pixel.
 
 <code>[**sigma**]{.parameter-name} [:]{.parameter-annotation-sep} [float or tuple of float]{.parameter-annotation} [ = ]{.parameter-default-sep} [3.0]{.parameter-default}</code>
 
-:   Lower and upper clipping thresholds applied to the pclip-estimated sigma. This maps to IRAF `lsigma` and `hsigma`.
+:   User-supplied lower and upper clipping multipliers applied to the pclip-estimated spread. This maps to IRAF `lsigma` and `hsigma`.
 
 <code>[**nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
 

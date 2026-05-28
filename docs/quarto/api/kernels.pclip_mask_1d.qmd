@@ -1,0 +1,15 @@
+# kernels.pclip_mask_1d { #imcombiners.kernels.pclip_mask_1d }
+
+```python
+kernels.pclip_mask_1d(
+    values,
+    *,
+    mask=None,
+    frac=-0.5,
+    sigma=3.0,
+    nkeep=1,
+    validate=True,
+)
+```
+
+Return only the IRAF-style pclip rejection mask for a 1-D value vector.

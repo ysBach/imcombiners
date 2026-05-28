@@ -1,0 +1,7 @@
+# kernels.sum_1d { #imcombiners.kernels.sum_1d }
+
+```python
+kernels.sum_1d(values, *, validate=True)
+```
+
+Return the NaN-aware sum of a 1-D value vector.

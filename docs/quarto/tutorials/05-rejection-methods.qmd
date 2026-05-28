@@ -46,7 +46,7 @@ The short Chained Combiner snippets below exist only to inspect masks, clipping 
 
 ## 2. Sigma Clipping
 
-Iteratively clips values more than `sigma` standard deviations from the per-pixel center estimate. Adapts to the local spread, so it works well even when the noise level varies slightly across frames.
+Iteratively clips values whose residual from the per-pixel center exceeds `sigma * spread`. Here `sigma` is the user-supplied multiplier, such as `3.0`; it is not the measured spread returned by NumPy-style standard-deviation functions. The measured spread comes from `stdfunc` and is recomputed during clipping, so the threshold adapts when the noise level varies slightly across frames.
 
 **Best for:** general-purpose rejection with near-Gaussian noise.
 
@@ -60,7 +60,7 @@ mask_sc, std_sc, low_sc, upp_sc, nit_sc, code_sc = c_sc.last_reject
 print(f"SigClip   - rejected {mask_sc.sum():4d} pixels, max iters used: {nit_sc.max()}")
 ```
 
-`low_sc` and `upp_sc` are the lowest and highest retained finite sample values after clipping. Values equal to a bound are kept; only values below `low_sc` or above `upp_sc` are rejected. The internal clipping thresholds are still computed from `center +/- sigma * spread`.
+`low_sc` and `upp_sc` are the lowest and highest retained finite sample values after clipping. Values equal to a bound are kept; only values below `low_sc` or above `upp_sc` are rejected. The internal clipping thresholds are still computed from `center +/- sigma * spread`, with `sigma` as the multiplier and `spread` as the measured per-pixel scale.
 
 The `nit` array shows how many clipping passes were needed per output element:
 

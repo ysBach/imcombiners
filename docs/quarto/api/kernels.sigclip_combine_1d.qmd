@@ -1,10 +1,11 @@
-# kernels.sigclip_mask { #imcombiners.kernels.sigclip_mask }
+# kernels.sigclip_combine_1d { #imcombiners.kernels.sigclip_combine_1d }
 
 ```python
-kernels.sigclip_mask(
-    arr,
+kernels.sigclip_combine_1d(
+    values,
     *,
     mask=None,
+    combine,
     sigma=(3.0, 3.0),
     maxiters=5,
     ddof=0,
@@ -14,9 +15,8 @@ kernels.sigclip_mask(
     clip_cen=None,
     stdfunc='std',
     revert_on_nkeep=True,
-    grow=None,
     validate=True,
 )
 ```
 
-Return only the sigma-clipping rejection mask.
+Return a 1-D sigma-clipped mean or median.

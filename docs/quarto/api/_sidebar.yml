@@ -23,20 +23,40 @@ website:
       - api/kernels.maximum.qmd
       - api/kernels.variance.qmd
       - api/kernels.weighted_average.qmd
+      - api/kernels.mean_1d.qmd
+      - api/kernels.median_1d.qmd
+      - api/kernels.lmedian_1d.qmd
+      - api/kernels.sum_1d.qmd
+      - api/kernels.min_1d.qmd
+      - api/kernels.max_1d.qmd
+      - api/kernels.var_1d.qmd
+      - api/kernels.wvg_1d.qmd
       - api/kernels.grow_mask.qmd
       - api/kernels.sigclip.qmd
+      - api/kernels.sigclip_1d.qmd
       - api/kernels.sigclip_mask.qmd
       - api/kernels.sigclip_combine.qmd
+      - api/kernels.sigclip_combine_1d.qmd
       - api/kernels.ccdclip.qmd
+      - api/kernels.ccdclip_1d.qmd
       - api/kernels.ccdclip_mask.qmd
+      - api/kernels.ccdclip_mask_1d.qmd
       - api/kernels.ccdclip_combine.qmd
+      - api/kernels.ccdclip_combine_1d.qmd
       - api/kernels.linearclip.qmd
+      - api/kernels.linearclip_1d.qmd
       - api/kernels.minmax.qmd
+      - api/kernels.minmax_1d.qmd
       - api/kernels.minmax_mask.qmd
+      - api/kernels.minmax_mask_1d.qmd
       - api/kernels.minmax_combine.qmd
+      - api/kernels.minmax_combine_1d.qmd
       - api/kernels.pclip.qmd
+      - api/kernels.pclip_1d.qmd
       - api/kernels.pclip_mask.qmd
+      - api/kernels.pclip_mask_1d.qmd
       - api/kernels.pclip_combine.qmd
+      - api/kernels.pclip_combine_1d.qmd
       section: 2 Kernel API
     - contents:
       - api/ndcombine.qmd
@@ -47,6 +67,8 @@ website:
       - api/set_rayon_num_threads.qmd
       - api/get_parallel_threshold.qmd
       - api/set_parallel_threshold.qmd
+      - api/get_minmax_1d_parallel_threshold.qmd
+      - api/set_minmax_1d_parallel_threshold.qmd
       section: 4 Parallel Controls
     id: api
   - id: dummy-sidebar

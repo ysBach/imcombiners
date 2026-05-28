@@ -12,6 +12,7 @@ kernels.sigclip(
     maxrej=None,
     cenfunc='median',
     clip_cen=None,
+    stdfunc='std',
     revert_on_nkeep=True,
     grow=None,
     validate=True,
@@ -32,7 +33,7 @@ Sigma-clipping rejection.
 
 <code>[**sigma**]{.parameter-name} [:]{.parameter-annotation-sep} [float or tuple of float]{.parameter-annotation} [ = ]{.parameter-default-sep} [(3.0, 3.0)]{.parameter-default}</code>
 
-:   Clipping threshold in units of the per-pixel std. A scalar applies the same value to both tails; a 2-tuple ``(sigma_lower, sigma_upper)`` clips asymmetrically.
+:   User-supplied clipping multiplier, not the measured data spread itself. Values are clipped when their residual from the clipping center exceeds ``sigma * spread``. A scalar applies the same multiplier to both tails; a 2-tuple ``(sigma_lower, sigma_upper)`` clips asymmetrically. Thresholds must be finite and non-negative.
 
 <code>[**maxiters**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [5]{.parameter-default}</code>
 
@@ -40,7 +41,7 @@ Sigma-clipping rejection.
 
 <code>[**ddof**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [0]{.parameter-default}</code>
 
-:   Delta degrees of freedom for the per-pixel std.
+:   Delta degrees of freedom for the per-pixel spread estimator.
 
 <code>[**nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
 
@@ -61,6 +62,10 @@ Sigma-clipping rejection.
 <code>[**revert_on_nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
 
 :   If `True`, an iteration that would leave fewer than `nkeep` usable samples at a pixel is reverted in full for that pixel. Input masks, threshold masks, and non-finite samples remain excluded. The default is `True`. If `False`, clipping is strict and may leave fewer than `nkeep` samples.
+
+<code>[**stdfunc**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'std\', \'mad\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"std\"]{.parameter-default}</code>
+
+:   Spread estimator used by sigma clipping. `"std"` uses the standard deviation. `"mad"` uses ``1.4826 * median(abs(x - clip_cen))`` as a robust sigma estimate; when `ddof > 0`, this estimate is multiplied by ``sqrt(nvalid / (nvalid - ddof))`` and pixels with ``nvalid <= ddof`` return `NaN` spread diagnostics.
 
 <code>[**grow**]{.parameter-name} [:]{.parameter-annotation-sep} [float or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
 

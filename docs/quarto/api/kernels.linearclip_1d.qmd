@@ -1,0 +1,21 @@
+# kernels.linearclip_1d { #imcombiners.kernels.linearclip_1d }
+
+```python
+kernels.linearclip_1d(
+    values,
+    *,
+    mask=None,
+    low_scale=1.0,
+    low=0.0,
+    upp_scale=1.0,
+    upp=0.0,
+    maxiters=1,
+    nkeep=1,
+    maxrej=None,
+    cenfunc='median',
+    revert_on_nkeep=True,
+    validate=True,
+)
+```
+
+Reject values outside center-relative linear bounds in a 1-D vector.

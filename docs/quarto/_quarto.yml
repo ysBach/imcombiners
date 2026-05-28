@@ -32,10 +32,16 @@ website:
             text: "06 Offset Stacking"
           - href: tutorials/07-iraf-compat.qmd
             text: "07 IRAF Compatibility"
-      - href: performance.qmd
-        text: Performance
-      - href: benchmarks.qmd
-        text: Benchmarks
+          - href: tutorials/08-1d-arrays.qmd
+            text: "08 1-D Arrays"
+      - text: Performance
+        menu:
+          - href: performance/max-performance.qmd
+            text: "How To Get Maximum Performance"
+          - href: performance/image-benchmarks.qmd
+            text: "2-D Image Benchmarks"
+          - href: performance/array-1d-benchmarks.qmd
+            text: "1-D Array Benchmarks"
       - href: api/index.qmd
         text: API
 
@@ -87,20 +93,40 @@ quartodoc:
         - kernels.maximum
         - kernels.variance
         - kernels.weighted_average
+        - kernels.mean_1d
+        - kernels.median_1d
+        - kernels.lmedian_1d
+        - kernels.sum_1d
+        - kernels.min_1d
+        - kernels.max_1d
+        - kernels.var_1d
+        - kernels.wvg_1d
         - kernels.grow_mask
         - kernels.sigclip
+        - kernels.sigclip_1d
         - kernels.sigclip_mask
         - kernels.sigclip_combine
+        - kernels.sigclip_combine_1d
         - kernels.ccdclip
+        - kernels.ccdclip_1d
         - kernels.ccdclip_mask
+        - kernels.ccdclip_mask_1d
         - kernels.ccdclip_combine
+        - kernels.ccdclip_combine_1d
         - kernels.linearclip
+        - kernels.linearclip_1d
         - kernels.minmax
+        - kernels.minmax_1d
         - kernels.minmax_mask
+        - kernels.minmax_mask_1d
         - kernels.minmax_combine
+        - kernels.minmax_combine_1d
         - kernels.pclip
+        - kernels.pclip_1d
         - kernels.pclip_mask
+        - kernels.pclip_mask_1d
         - kernels.pclip_combine
+        - kernels.pclip_combine_1d
     - title: "3 Compatibility API"
       desc: IRAF-style compact wrapper.
       contents:
@@ -113,6 +139,8 @@ quartodoc:
         - set_rayon_num_threads
         - get_parallel_threshold
         - set_parallel_threshold
+        - get_minmax_1d_parallel_threshold
+        - set_minmax_1d_parallel_threshold
   renderer:
     style: markdown
     display_name: short

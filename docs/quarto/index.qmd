@@ -115,17 +115,16 @@ The current implementation works on full arrays. For a `float32` input stack wit
 
 ## 6. Performance
 
-This package is built around image-stack reductions where both algorithmic work and memory traffic matter. The following choices are intended to change runtime and memory traffic, not mathematical results:
+This package is built around image-stack reductions where both algorithmic work
+and memory traffic matter. The fastest high-level rejection path is usually
+Standard Combiner with `diagnostics=None`, or the equivalent compact
+`ndcombine()` call, because those routes can avoid diagnostic products and use
+fused rejection-plus-combine kernels where supported.
 
-- **Fuse output-only rejection and final reduction when it is exact.** IRAF avoids duplicate work when the rejection path already has the retained samples needed for the requested final value. `imc` applies that work-elimination principle through supported `mean`/`median` output-only Rust paths.
-- **Axis-first public layout.** `(N, *spatial)` matches the cheap `np.stack(images, axis=0)` construction path. Building a C-order `(H, W, N)` cube from separate images can cost a lot; see [Performance](performance.qmd#why-the-stack-axis-is-first).
-- **Prepared float workspaces.** Public calls validate and promote dtypes at the boundary; hot loops can prepare a C-contiguous `float32`/`float64` workspace once and then use `validate=False` on already-checked data.
-- **Fused output-only kernels.** Supported `diagnostics=None` mean/median rejection calls combine rejection and final reduction in one Rust pass instead of materializing a full rejection mask, copying a NaN-filled stack, and calling a second combine kernel.
-- **Per-worker scratch reuse.** Each Rayon worker keeps reusable temporary buffers for one per-output stack: copied pixel values, boolean masks, sorted rank pairs, and statistic work arrays.
-- **Raw contiguous slice indexing.** After validation, the Rust kernels require C-contiguous NumPy arrays. They view the stack as one flat memory slice and compute offsets directly, avoiding repeated multidimensional ndarray indexing and shape/stride bookkeeping in inner loops.
-- **CCD clip without a full gain copy.** `ccdclip`, `ccdclip_mask`, and output-only `ccdclip_combine` pass `gain` into Rust and evaluate rejection on gain-corrected per-pixel scratch values instead of first materializing a full `arr / gain` stack. Output-only `ccdclip` still combines the original source values.
-- **Mask-aware finite handling.** Non-finite samples are folded into masks once, so later inner loops can avoid redundant finite checks where correctness permits.
+The detailed performance model lives in [How To Get Maximum Performance](performance/max-performance.qmd):
 
-The fastest high-level rejection path is Standard Combiner with `diagnostics=None`, or the equivalent compact ndcombine() wrapper call. These calls can avoid building diagnostic products and, for supported single-rejector `mean`/`median` cases, can fuse rejection and final reduction. Direct kernel calls can skip the high-level wrapper, validation, and copying, but they still call the same Rust kernels. If you need `last_reject`, `mask_rej`, `low`, `upp`, `nit`, or `output_flags`, use Chained Combiner or `diagnostics="simple"` and expect the extra work.
+- [Implementation Tricks](performance/max-performance.qmd#implementation-tricks) explains the Rust-side choices such as fused output-only kernels, scratch reuse, variance-domain sigma clipping, selective median, and rank-pair final combine.
+- [Scope Of The Fastest Paths](performance/max-performance.qmd#scope-of-the-fastest-paths) explains when Standard Combiner, `ndcombine()`, Chained Combiner, and direct kernel calls differ in requested work.
+- [Workspace Requirements](performance/max-performance.qmd#workspace-requirements), [Why The Stack Axis Is First](performance/max-performance.qmd#why-the-stack-axis-is-first), and [Thread Tuning](performance/max-performance.qmd#thread-tuning) cover layout and tuning.
 
-Detailed optimized-workspace guidance, parallel settings, and benchmark interpretation live in [Performance](performance.qmd).
+Recorded local benchmark tables are split into [2-D Image Benchmarks](performance/image-benchmarks.qmd) and [1-D Array Benchmarks](performance/array-1d-benchmarks.qmd).

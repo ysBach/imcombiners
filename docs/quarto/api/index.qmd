@@ -31,20 +31,40 @@ Advanced one-operation primitives for custom pipeline layers.
 | [kernels.maximum](kernels.maximum.qmd#imcombiners.kernels.maximum) | Return the NaN-aware maximum along the stack axis. |
 | [kernels.variance](kernels.variance.qmd#imcombiners.kernels.variance) | Return the NaN-aware variance along the stack axis. |
 | [kernels.weighted_average](kernels.weighted_average.qmd#imcombiners.kernels.weighted_average) | Return the NaN-aware weighted average along the stack axis. |
+| [kernels.mean_1d](kernels.mean_1d.qmd#imcombiners.kernels.mean_1d) | Return the NaN-aware mean of a 1-D value vector. |
+| [kernels.median_1d](kernels.median_1d.qmd#imcombiners.kernels.median_1d) | Return the NaN-aware median of a 1-D value vector. |
+| [kernels.lmedian_1d](kernels.lmedian_1d.qmd#imcombiners.kernels.lmedian_1d) | Return the NaN-aware lower median of a 1-D value vector. |
+| [kernels.sum_1d](kernels.sum_1d.qmd#imcombiners.kernels.sum_1d) | Return the NaN-aware sum of a 1-D value vector. |
+| [kernels.min_1d](kernels.min_1d.qmd#imcombiners.kernels.min_1d) | Return the NaN-aware minimum of a 1-D value vector. |
+| [kernels.max_1d](kernels.max_1d.qmd#imcombiners.kernels.max_1d) | Return the NaN-aware maximum of a 1-D value vector. |
+| [kernels.var_1d](kernels.var_1d.qmd#imcombiners.kernels.var_1d) | Return the NaN-aware variance of a 1-D value vector. |
+| [kernels.wvg_1d](kernels.wvg_1d.qmd#imcombiners.kernels.wvg_1d) | Return the NaN-aware weighted average of a 1-D value vector. |
 | [kernels.grow_mask](kernels.grow_mask.qmd#imcombiners.kernels.grow_mask) | Dilate a stack mask over spatial axes by an exact Euclidean radius. |
 | [kernels.sigclip](kernels.sigclip.qmd#imcombiners.kernels.sigclip) | Sigma-clipping rejection. |
+| [kernels.sigclip_1d](kernels.sigclip_1d.qmd#imcombiners.kernels.sigclip_1d) | Sigma-clipping rejection for a 1-D value vector. |
 | [kernels.sigclip_mask](kernels.sigclip_mask.qmd#imcombiners.kernels.sigclip_mask) | Return only the sigma-clipping rejection mask. |
 | [kernels.sigclip_combine](kernels.sigclip_combine.qmd#imcombiners.kernels.sigclip_combine) | Return an output-only sigma-clipped mean or median. |
+| [kernels.sigclip_combine_1d](kernels.sigclip_combine_1d.qmd#imcombiners.kernels.sigclip_combine_1d) | Return a 1-D sigma-clipped mean or median. |
 | [kernels.ccdclip](kernels.ccdclip.qmd#imcombiners.kernels.ccdclip) | CCD noise-model clipping. |
+| [kernels.ccdclip_1d](kernels.ccdclip_1d.qmd#imcombiners.kernels.ccdclip_1d) | CCD noise-model clipping for a 1-D value vector. |
 | [kernels.ccdclip_mask](kernels.ccdclip_mask.qmd#imcombiners.kernels.ccdclip_mask) | Return only the CCD-clipping rejection mask. |
+| [kernels.ccdclip_mask_1d](kernels.ccdclip_mask_1d.qmd#imcombiners.kernels.ccdclip_mask_1d) | Return only the CCD-clipping rejection mask for a 1-D value vector. |
 | [kernels.ccdclip_combine](kernels.ccdclip_combine.qmd#imcombiners.kernels.ccdclip_combine) | Return an output-only CCD-clipped mean or median. |
+| [kernels.ccdclip_combine_1d](kernels.ccdclip_combine_1d.qmd#imcombiners.kernels.ccdclip_combine_1d) | Return a 1-D CCD-clipped mean or median. |
 | [kernels.linearclip](kernels.linearclip.qmd#imcombiners.kernels.linearclip) | Center-relative linear clipping (`low + low_scale * center <= value <= upp + upp_scale * center`). |
+| [kernels.linearclip_1d](kernels.linearclip_1d.qmd#imcombiners.kernels.linearclip_1d) | Reject values outside center-relative linear bounds in a 1-D vector. |
 | [kernels.minmax](kernels.minmax.qmd#imcombiners.kernels.minmax) | Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. Single-pass. |
+| [kernels.minmax_1d](kernels.minmax_1d.qmd#imcombiners.kernels.minmax_1d) | Reject tail-ranked unmasked values in a 1-D value vector. |
 | [kernels.minmax_mask](kernels.minmax_mask.qmd#imcombiners.kernels.minmax_mask) | Return only the minmax rejection mask. |
+| [kernels.minmax_mask_1d](kernels.minmax_mask_1d.qmd#imcombiners.kernels.minmax_mask_1d) | Return only the minmax rejection mask for a 1-D value vector. |
 | [kernels.minmax_combine](kernels.minmax_combine.qmd#imcombiners.kernels.minmax_combine) | Return an output-only minmax-rejected mean or median. |
+| [kernels.minmax_combine_1d](kernels.minmax_combine_1d.qmd#imcombiners.kernels.minmax_combine_1d) | Return a 1-D minmax-rejected mean or median. |
 | [kernels.pclip](kernels.pclip.qmd#imcombiners.kernels.pclip) | IRAF-style percentile clipping at each pixel. |
+| [kernels.pclip_1d](kernels.pclip_1d.qmd#imcombiners.kernels.pclip_1d) | IRAF-style percentile clipping for a 1-D value vector. |
 | [kernels.pclip_mask](kernels.pclip_mask.qmd#imcombiners.kernels.pclip_mask) | Return only the IRAF-style pclip rejection mask. |
+| [kernels.pclip_mask_1d](kernels.pclip_mask_1d.qmd#imcombiners.kernels.pclip_mask_1d) | Return only the IRAF-style pclip rejection mask for a 1-D value vector. |
 | [kernels.pclip_combine](kernels.pclip_combine.qmd#imcombiners.kernels.pclip_combine) | Return an output-only pclip-rejected mean or median. |
+| [kernels.pclip_combine_1d](kernels.pclip_combine_1d.qmd#imcombiners.kernels.pclip_combine_1d) | Return a 1-D pclip-rejected mean or median. |
 
 ## 3 Compatibility API
 
@@ -65,3 +85,5 @@ Runtime controls for Rayon worker count and serial/parallel cutoff.
 | [set_rayon_num_threads](set_rayon_num_threads.qmd#imcombiners.set_rayon_num_threads) | Set the Rayon global worker-pool size. |
 | [get_parallel_threshold](get_parallel_threshold.qmd#imcombiners.get_parallel_threshold) | Return the output-element threshold where kernels switch to Rayon. |
 | [set_parallel_threshold](set_parallel_threshold.qmd#imcombiners.set_parallel_threshold) | Set the output-element threshold where kernels switch to Rayon. |
+| [get_minmax_1d_parallel_threshold](get_minmax_1d_parallel_threshold.qmd#imcombiners.get_minmax_1d_parallel_threshold) | Return the vector length where 1-D min/max switch to Rayon. |
+| [set_minmax_1d_parallel_threshold](set_minmax_1d_parallel_threshold.qmd#imcombiners.set_minmax_1d_parallel_threshold) | Set the vector length where 1-D min/max switch to Rayon. |

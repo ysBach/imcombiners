@@ -1,8 +1,8 @@
-# kernels.sigclip_mask { #imcombiners.kernels.sigclip_mask }
+# kernels.sigclip_1d { #imcombiners.kernels.sigclip_1d }
 
 ```python
-kernels.sigclip_mask(
-    arr,
+kernels.sigclip_1d(
+    values,
     *,
     mask=None,
     sigma=(3.0, 3.0),
@@ -14,9 +14,8 @@ kernels.sigclip_mask(
     clip_cen=None,
     stdfunc='std',
     revert_on_nkeep=True,
-    grow=None,
     validate=True,
 )
 ```
 
-Return only the sigma-clipping rejection mask.
+Sigma-clipping rejection for a 1-D value vector.

@@ -1,0 +1,7 @@
+# kernels.minmax_mask_1d { #imcombiners.kernels.minmax_mask_1d }
+
+```python
+kernels.minmax_mask_1d(values, *, mask=None, n_min=1, n_max=1, validate=True)
+```
+
+Return only the minmax rejection mask for a 1-D value vector.

@@ -1,0 +1,25 @@
+# kernels.ccdclip_mask_1d { #imcombiners.kernels.ccdclip_mask_1d }
+
+```python
+kernels.ccdclip_mask_1d(
+    values,
+    *,
+    mask=None,
+    sigma=(3.0, 3.0),
+    maxiters=5,
+    ddof=0,
+    nkeep=1,
+    maxrej=None,
+    cenfunc='median',
+    clip_cen=None,
+    revert_on_nkeep=True,
+    rdnoise=0.0,
+    gain=1.0,
+    snoise=0.0,
+    scale_ref=1.0,
+    zero_ref=0.0,
+    validate=True,
+)
+```
+
+Return only the CCD-clipping rejection mask for a 1-D value vector.

@@ -1,0 +1,117 @@
+---
+title: "08 1-D Arrays"
+---
+
+`imcombiners.kernels` can also work on ordinary 1-D value vectors. The `_1d`
+functions expose the same NaN-aware reductions and rejection semantics used by
+the image-stack kernels, without requiring you to reshape a vector into
+`(N, 1, 1)` yourself.
+
+```{python}
+import numpy as np
+import imcombiners.kernels as imck
+```
+
+## Scalar Statistics
+
+Use the direct scalar functions for generic vectors, flattened images, light
+curves, or detector samples:
+
+```{python}
+rng = np.random.default_rng(20260528)
+values = rng.normal(1000.0, 30.0, size=10_000).astype("float32")
+values[0] = np.nan
+values[1] += 700.0
+
+print(imck.mean_1d(values))
+print(imck.median_1d(values))
+print(imck.var_1d(values))
+```
+
+Names use Python's common words for 1-D utilities:
+
+| Function | Meaning |
+|---|---|
+| `mean_1d(values)` | NaN-aware mean |
+| `median_1d(values)` | NaN-aware median |
+| `lmedian_1d(values)` | lower median, matching IRAF/imcombine convention |
+| `sum_1d(values)` | NaN-aware sum |
+| `min_1d(values)` | NaN-aware minimum |
+| `max_1d(values)` | NaN-aware maximum |
+| `var_1d(values, ddof=0)` | NaN-aware variance |
+| `wvg_1d(values, weights)` | NaN-aware weighted average |
+
+## Rejection Masks
+
+The rejection utilities return the same products as stack rejection, but with
+1-D shapes and scalar diagnostics:
+
+```{python}
+mask_rej, std, low, upp, nit, flags = imck.sigclip_1d(
+    values,
+    sigma=3.0,
+    maxiters=5,
+    cenfunc="median",
+)
+
+print(mask_rej.shape)
+print(std, low, upp, nit, flags)
+```
+
+The mask-only functions are convenient when you want to inspect or reuse the
+survivors yourself:
+
+```{python}
+mask = imck.sigclip_mask_1d(values, sigma=3.0)
+survivors = values[~mask & np.isfinite(values)]
+
+print(survivors.size)
+print(imck.median_1d(survivors))
+```
+
+## Rejected Combine
+
+For output-only robust statistics, call the `_combine_1d` helpers:
+
+```{python}
+sigclip_median = imck.sigclip_combine_1d(
+    values,
+    combine="median",
+    sigma=3.0,
+    maxiters=5,
+)
+
+trimmed_mean = imck.minmax_combine_1d(
+    values,
+    combine="mean",
+    n_min=1,
+    n_max=1,
+)
+
+print(sigclip_median, trimmed_mean)
+```
+
+The available rejection families mirror the image-stack API:
+
+| Full result | Mask only | Output-only combine |
+|---|---|---|
+| `sigclip_1d` | `sigclip_mask_1d` | `sigclip_combine_1d` |
+| `ccdclip_1d` | `ccdclip_mask_1d` | `ccdclip_combine_1d` |
+| `minmax_1d` | `minmax_mask_1d` | `minmax_combine_1d` |
+| `pclip_1d` | `pclip_mask_1d` | `pclip_combine_1d` |
+| `linearclip_1d` | - | - |
+
+## Validation and Hot Loops
+
+By default the functions validate shape, dtype, mask length, and contiguity. In
+a tight loop, prepare the vector once and pass `validate=False`:
+
+```{python}
+workspace = np.ascontiguousarray(values, dtype=np.float32)
+out = imck.median_1d(workspace, validate=False)
+print(out)
+```
+
+Use `validate=False` only when you already know the input is a 1-D contiguous
+`float32` or `float64` array and any mask/weights have matching length. The
+validated path is the safer default for scripts and notebooks.

@@ -30,13 +30,15 @@ _GROW_PARAM = """grow : float or None, optional
     disables growth and skips the extra calculation."""
 
 _ITERATIVE_PARAMS = """sigma : float or tuple of float
-    Clipping threshold in units of the per-pixel std. A scalar applies the same
-    value to both tails; a 2-tuple ``(sigma_lower, sigma_upper)`` clips
-    asymmetrically.
+    User-supplied clipping multiplier, not the measured data spread itself.
+    Values are clipped when their residual from the clipping center exceeds
+    ``sigma * spread``. A scalar applies the same multiplier to both tails; a
+    2-tuple ``(sigma_lower, sigma_upper)`` clips asymmetrically. Thresholds
+    must be finite and non-negative.
 maxiters : int
     Maximum number of clipping iterations per pixel.
 ddof : int
-    Delta degrees of freedom for the per-pixel std.
+    Delta degrees of freedom for the per-pixel spread estimator.
 nkeep : int
     Minimum number of unmasked values to preserve at each pixel. An iteration
     that would drop below this count is reverted in full. The default, `1`,
@@ -56,6 +58,17 @@ revert_on_nkeep : bool
     at a pixel is reverted in full for that pixel. Input masks, threshold
     masks, and non-finite samples remain excluded. The default is `True`.
     If `False`, clipping is strict and may leave fewer than `nkeep` samples."""
+
+_SIGMA_ITERATIVE_PARAMS = (
+    _ITERATIVE_PARAMS
+    + """
+stdfunc : {"std", "mad"}
+    Spread estimator used by sigma clipping. `"std"` uses the standard
+    deviation. `"mad"` uses ``1.4826 * median(abs(x - clip_cen))`` as a robust
+    sigma estimate; when `ddof > 0`, this estimate is multiplied by
+    ``sqrt(nvalid / (nvalid - ddof))`` and pixels with ``nvalid <= ddof``
+    return `NaN` spread diagnostics."""
+)
 
 _REJECTION_RETURNS = """mask_rej : ndarray of bool, shape (N, *spatial)
     `True` where a value was rejected by this kernel.
@@ -158,7 +171,7 @@ _COMBINE_SPECS = {
 _REJECTION_SPECS = {
     "sigclip": (
         "Sigma-clipping rejection.",
-        _ITERATIVE_PARAMS,
+        _SIGMA_ITERATIVE_PARAMS,
         "",
     ),
     "ccdclip": (
@@ -234,8 +247,8 @@ _REJECTION_SPECS = {
         "values estimate sigma from the high side of the sorted median; "
         "negative values estimate sigma from the low side.\n"
         "sigma : float or tuple of float, optional\n"
-        "    Lower and upper clipping thresholds applied to the pclip-estimated "
-        "sigma. This maps to IRAF `lsigma` and `hsigma`.\n"
+        "    User-supplied lower and upper clipping multipliers applied to the "
+        "pclip-estimated spread. This maps to IRAF `lsigma` and `hsigma`.\n"
         "nkeep : int, optional\n"
         "    Minimum number of unmasked samples to retain after pclip rejection.",
         "This follows IRAF `imcombine` pclip semantics: choose a sorted rank "
@@ -246,7 +259,7 @@ _REJECTION_SPECS = {
 
 
 _REJECTOR_CLASS_DOCS = {
-    "SigClip": ("Iterative sigma-clipping rejection.", _ITERATIVE_PARAMS),
+    "SigClip": ("Iterative sigma-clipping rejection.", _SIGMA_ITERATIVE_PARAMS),
     "CcdClip": (
         "CCD noise-model clipping.",
         _ITERATIVE_PARAMS + "\nrdnoise : float\n"
@@ -308,8 +321,8 @@ _REJECTOR_CLASS_DOCS = {
         "    IRAF `pclip` value. Values with ``abs(frac) < 1`` are converted "
         "to an integer sorted-rank offset using half of the input image count.\n"
         "sigma : float or tuple of float\n"
-        "    Lower and upper clipping thresholds applied to the pclip-estimated "
-        "sigma.\n"
+        "    User-supplied lower and upper clipping multipliers applied to the "
+        "pclip-estimated spread.\n"
         "nkeep : int\n"
         "    Minimum number of unmasked samples to retain after pclip rejection.",
     ),

@@ -1,20 +1,20 @@
 # imcombiners
+**(Image + Combiner + Rust(rs))**, made for Python.
 
 <p align="center">
   <img src="logo.png" alt="imcombiners logo" width="170">
 </p>
 
-**(Image + Combiner + Rust(rs))**
 
-> **Status:** alpha - see the [CHANGELOG](CHANGELOG.md).
+`imcombiners` was built for astronomical image-stack combination, but the core kernels are general-purpose reductions for stack combination, 1-D statistics, and pixel/value rejection.
 
-`imcombiners` was built for astronomical image-stack combination, but the core
-kernels are general-purpose reductions for stack combination and pixel
-rejection.
+Documentation: https://ysbach.github.io/imcombiners/
+GitHub: https://github.com/ysBach/imcombiners
 
-The package started as a tool for the main developer(@ysBach)'s reduction tools (ysfitsutilpy).
-Now it targets a modern Python API around Rust kernels, with IRAF `IMCOMBINE` compatibility but with better speed & API.
-Tests and benchmark material compare supported paths against IRAF, Astropy/NumPy, `ccdproc`, and `bottleneck` where appropriate.
+The package started as a tool for the main developer(@ysBach)'s reduction tools ([ysfitsutilpy](https://github.com/ysBach/ysfitsutilpy)). It is a result of their graduate school life, TA experience (2016-2023), and astropy image combination TF experience (2020). After years of use & trial using `numba`, I finally rewrote the core in Rust for better speed, reliability, and maintainability.
+
+Now it targets a modern Python API around Rust kernels, with IRAF `IMCOMBINE` compatibility but with **better speed & API**.
+Tests and benchmark material compare supported paths against IRAF, Astropy/NumPy, `ccdproc`, and `bottleneck` where appropriate. On a personal laptop (Apple M4 Pro), I experience a factor of few speedup over IRAF and dozens times over Python-based tools (astropy/ccdproc/bottleneck) for typical use cases. See the Documentation.
 
 
 ## First Look
@@ -53,22 +53,17 @@ See [docs/quarto/index.qmd](docs/quarto/index.qmd#first-look) for the detailed e
 ## Features
 
 - Stack combination: mean, median, lower median, sum, min, max, variance, and weighted average.
+- 1-D utilities: `imcombiners.kernels` exposes `_1d` functions such as `median_1d`, `var_1d`, `wvg_1d`, `sigclip_mask_1d`, and `minmax_combine_1d` for generic vectors, flattened images, light curves, and detector samples.
 - Pixel rejection: sigma, CCD noise-model, iterative linear, min/max, and IRAF-style percentile clipping. Rejection centers accept mean, median, and lower median (`lmedian`/`lmed`).
 - Pipeline helpers: threshold masking, zero/scale normalization, offset padding, masks, `diagnostics=None|"simple"|"full"`, and output-only fast paths.
-- Performance docs: see [docs/quarto/performance.qmd](docs/quarto/performance.qmd).
-
-## Documentation
-TBD
+- Performance docs: see [docs/quarto/performance/max-performance.qmd](docs/quarto/performance/max-performance.qmd), [docs/quarto/performance/image-benchmarks.qmd](docs/quarto/performance/image-benchmarks.qmd), and [docs/quarto/performance/array-1d-benchmarks.qmd](docs/quarto/performance/array-1d-benchmarks.qmd).
 
 ## Development Install
 
-Requires Python, `uv`, a stable Rust toolchain, and the Quarto CLI when
-rendering documentation.
-
 ```bash
-uv sync --extra dev
-uv run maturin develop --release
-uv run pytest -q
+# You may activate your Python environment before this, e.g.,
+# source ~/.venvs/your_env/bin/activate
+uv pip install -e ".[dev]"
 ```
 
 ## Testing and Benchmarks
@@ -76,6 +71,7 @@ uv run pytest -q
 ```bash
 uv run pytest
 uv run --extra bench python benchmarks/benchmark_combine.py
+uv run --extra bench python benchmarks/benchmark_1d.py
 uv run python benchmarks/benchmark_threads.py
 ```
 

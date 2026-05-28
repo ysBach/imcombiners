@@ -1,0 +1,7 @@
+# kernels.minmax_1d { #imcombiners.kernels.minmax_1d }
+
+```python
+kernels.minmax_1d(values, *, mask=None, n_min=1, n_max=1, validate=True)
+```
+
+Reject tail-ranked unmasked values in a 1-D value vector.

@@ -1,0 +1,7 @@
+# kernels.var_1d { #imcombiners.kernels.var_1d }
+
+```python
+kernels.var_1d(values, *, ddof=0, validate=True)
+```
+
+Return the NaN-aware variance of a 1-D value vector.

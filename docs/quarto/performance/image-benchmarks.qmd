@@ -1,0 +1,215 @@
+---
+title: "2-D Image Benchmarks"
+---
+
+This page records representative 2-D image-stack combine/rejection benchmarks.
+Timings are machine-specific; see
+[How To Get Maximum Performance](max-performance.qmd) for tuning guidance,
+optimized-workspace notes, and benchmark interpretation.
+
+## 1. IRAF Benchmark: compact ndcombine() wrapper
+
+::: {.callout-tip title="TL;DR"}
+In the local 512x512 output-only parity run below (N=7), **`imc` is about 1.2-2.4x faster** than IRAF `IMCOMBINE` across the detailed operation/dtype rows. When using 1k*1k, the number becomes ≳4x.
+
+Extensively tested `imc` outputs match IRAF's `IMCOMBINE` for supported compatibility cases.
+
+FITS I/O times are included. For IRAF setup, `ecl.e` discovery, parity cases,
+and details, see `benchmarks/IRAF/README.md`.
+:::
+
+
+The IRAF comparison is a task-level benchmark for supported output-only
+compatibility cases. It validates `imc` output-only results against IRAF, then
+times FITS input reads, stacking, `ndcombine(..., diagnostics=None)`, and
+combined FITS output writes. It does not time diagnostics, spatial `grow`, or a
+pure Rust kernel microbenchmark.
+The same fused path is available from Standard Combiner as `cmb.combine(method, rejectors=..., diagnostics=None)` after `cmb = Combiner(arr)`. The compact ndcombine() wrapper is used here because this benchmark is the IRAF-style compatibility/CLI-facing path. See [How To Get Maximum Performance](max-performance.qmd#scope-of-the-fastest-paths) for what the fast path skips and why it is faster than diagnostic routes.
+
+```bash
+uv run --extra bench python benchmarks/IRAF/scripts/benchmark_iraf.py --width 512 --height 512
+```
+
+On the local 512x512 parity matrix after the fused-kernel work, one-case
+throughput by operation/dtype was:
+
+| op | dtype | N | imc ms | IRAF ms | IRAF/imc (speedup) |
+|---|---|---:|---:|---:|---:|
+| sigclip_mean | uint16 | 7 | 8.247 | 14.136 | 1.7x |
+| ccdclip_mean | uint16 | 7 | 7.767 | 12.177 | 1.6x |
+| pclip_mean | uint16 | 7 | 7.891 | 15.759 | 2.0x |
+| minmax_mean | uint16 | 7 | 7.834 | 11.066 | 1.4x |
+| sigclip_median | uint16 | 7 | 7.810 | 11.567 | 1.5x |
+| ccdclip_median | uint16 | 7 | 7.348 | 12.325 | 1.7x |
+| pclip_median | uint16 | 7 | 7.709 | 11.588 | 1.5x |
+| minmax_median | uint16 | 7 | 7.750 | 10.320 | 1.3x |
+| sigclip_mean | int16 | 7 | 5.805 | 14.045 | 2.4x |
+| ccdclip_mean | int16 | 7 | 6.767 | 11.238 | 1.7x |
+| pclip_mean | int16 | 7 | 5.727 | 12.106 | 2.1x |
+| minmax_mean | int16 | 7 | 6.055 | 7.539 | 1.2x |
+| sigclip_median | int16 | 7 | 6.105 | 11.115 | 1.8x |
+| ccdclip_median | int16 | 7 | 6.429 | 10.931 | 1.7x |
+| pclip_median | int16 | 7 | 5.803 | 12.272 | 2.1x |
+| minmax_median | int16 | 7 | 6.136 | 9.430 | 1.5x |
+| sigclip_mean | float32 | 7 | 7.942 | 15.148 | 1.9x |
+| ccdclip_mean | float32 | 7 | 8.595 | 14.650 | 1.7x |
+| pclip_mean | float32 | 7 | 8.012 | 14.110 | 1.8x |
+| minmax_mean | float32 | 7 | 8.084 | 9.635 | 1.2x |
+| sigclip_median | float32 | 7 | 9.350 | 14.458 | 1.5x |
+| ccdclip_median | float32 | 7 | 8.183 | 14.416 | 1.8x |
+| pclip_median | float32 | 7 | 8.017 | 14.121 | 1.8x |
+| minmax_median | float32 | 7 | 7.898 | 12.640 | 1.6x |
+
+Rows are medians across the `baseline`, threshold, and input-BPM IRAF parity
+variants for each operation/dtype pair. This result is specifically for
+output-only `mean`/`median` combinations with `sigclip`, `ccdclip`, `pclip`,
+and `minmax` on the measured machine.
+
+`benchmark_iraf.py` prints a full Markdown report, including optional one-case
+rows, to stdout. Use `--output /tmp/imc-iraf-benchmark.md` for a local artifact;
+the source tree tracks only this curated summary. The detailed benchmark harness
+notes live in `benchmarks/IRAF/README.md`.
+
+## 2. Benchmark Table
+
+Benchmark done on MBP 14" [2024, macOS 26.4.1, M4Pro(8P+4E/G20c/N16c/48G)]. See `benchmarks/benchmark_combine.py` for details.
+
+::: {.callout-tip title="TL;DR"}
+`imc` (Standard Combiner, `diagnostics=None`) is usually faster than the Astropy/NumPy and ccdproc comparison paths. The strongest rows are the frequently used **median** and **sigma-clipped median** combinations, especially for **float32** images.
+
+`imc` is the safe public Standard Combiner route. `imc_chain` is the Chained Combiner route that keeps rejection diagnostics. `imc_opt` is the prepared direct kernel calls path (`import imcombiners.kernels as imck`) with validation disabled and fused kernels where available.
+
+`imc_opt` is much faster than Chained Combiner and usually faster than Standard Combiner because it skips object construction, validation, and default workspace copies. When `imc_opt` only near-ties Standard Combiner, that is expected: both paths are calling the same fused Rust kernel, so only Python wrapper/preparation overhead remains.
+:::
+
+Columns:
+
+| | |
+|---|---|
+| **imc** | Standard Combiner on the original input dtype, ms. For supported single-rejector mean/median sigclip rows with `diagnostics=None`, this dispatches through the fused kernel. |
+| **imc_chain** | Chained Combiner path, ms. For rejection rows this retains diagnostics and pipeline state, so it intentionally does more work than fast output-only routes. For simple rows it is the same basic `cmb.combine(...)` shape without rejection diagnostics. |
+| **imc_opt** | direct kernel calls on a prepared contiguous float workspace with `validate=False`, ms. For sigclip rows this calls the fused `imck.sigclip_combine(...)` kernel and passes `mask=` directly. For simple masked mean/median rows the benchmark still materializes NaNs because the plain mean/median kernels do not accept `mask=`. |
+| **ap_bn** | NumPy `nanmean`/`nanmedian` for simple rows; Astropy `sigma_clip` plus NumPy `nan*` reduction for sigclip rows, ms |
+| **ccdproc** | `ccdproc.Combiner`, ms |
+| **imc/opt** | imc ÷ imc_opt - values above 1.0 mean direct kernel calls are faster than Standard Combiner |
+| **chain/opt** | imc_chain ÷ imc_opt - Chained Combiner cost relative to direct kernel calls |
+| **ap/opt** | ap_bn ÷ imc_opt - Astropy/NumPy comparison path vs direct kernel calls |
+| **ccd/opt** | ccdproc ÷ imc_opt - ccdproc vs direct kernel calls |
+
+The benchmark validates `imc`, `imc_chain`, and `imc_opt` against the Astropy/NumPy reference before timing. ccdproc differences are informational only and are marked † when they exceed the tolerance; for sigclip rows, the script intentionally leaves `ccdproc.Combiner.sigma_clipping()` at its public default iteration behavior while the reference and imcombiners paths use `maxiters=5`.
+
+
+Below are results from this command, regenerated after the rejection-kernel
+scratch-reuse and variance-domain sigma-clipping updates:
+```bash
+uv run --extra bench python benchmarks/benchmark_combine.py
+```
+
+
+## 3. No Mask
+
+### Simple
+
+| op     | dtype   |  N |  imc | imc_chain | imc_opt |  ap_bn | ccdproc | imc/opt | chain/opt | ap/opt | ccd/opt |
+| ------ | ------- | --: | ---: | --------: | ------: | -----: | ------: | ------: | --------: | -----: | ------: |
+| mean   | uint8   |  5 | 0.81 |      0.83 |    0.35 |   1.39 |    3.27 |     2.3 |       2.3 |    3.9 |     9.2 |
+| median | uint8   |  5 | 1.37 |      1.44 |    0.86 |  20.94 |   50.07 |     1.6 |       1.7 |   24.3 |    58.0 |
+| mean   | uint8   | 31 | 3.50 |      3.37 |    1.14 |   7.68 |   28.65 |     3.1 |       3.0 |    6.7 |    25.2 |
+| median | uint8   | 31 | 6.40 |      6.54 |    4.10 | 212.58 |  497.49 |     1.6 |       1.6 |   51.8 |   121.2 |
+| mean   | uint16  |  5 | 0.72 |      0.72 |    0.29 |   1.38 |    3.25 |     2.5 |       2.5 |    4.8 |    11.3 |
+| median | uint16  |  5 | 1.41 |      1.50 |    0.91 |  20.82 |   50.42 |     1.5 |       1.6 |   22.8 |    55.3 |
+| mean   | uint16  | 31 | 3.52 |      3.34 |    1.15 |   7.69 |   28.92 |     3.0 |       2.9 |    6.7 |    25.0 |
+| median | uint16  | 31 | 6.50 |      6.45 |    4.38 | 217.63 |  509.91 |     1.5 |       1.5 |   49.6 |   116.3 |
+| mean   | int16   |  5 | 0.67 |      0.70 |    0.33 |   1.43 |    3.33 |     2.0 |       2.1 |    4.3 |    10.0 |
+| median | int16   |  5 | 1.32 |      1.31 |    0.90 |  20.35 |   50.83 |     1.5 |       1.5 |   22.6 |    56.5 |
+| mean   | int16   | 31 | 3.47 |      3.36 |    1.07 |   7.74 |   29.11 |     3.2 |       3.1 |    7.2 |    27.2 |
+| median | int16   | 31 | 6.61 |      7.11 |    4.89 | 217.11 |  515.67 |     1.4 |       1.5 |   44.4 |   105.4 |
+| mean   | int32   |  5 | 0.79 |      0.77 |    0.40 |   1.42 |    3.34 |     2.0 |       1.9 |    3.5 |     8.3 |
+| median | int32   |  5 | 1.43 |      1.44 |    0.93 |  21.45 |   51.29 |     1.5 |       1.5 |   23.0 |    55.1 |
+| mean   | int32   | 31 | 4.30 |      4.27 |    1.40 |   8.05 |   29.47 |     3.1 |       3.0 |    5.7 |    21.0 |
+| median | int32   | 31 | 7.56 |      7.52 |    4.83 | 215.86 |  510.40 |     1.6 |       1.6 |   44.7 |   105.7 |
+| mean   | float32 |  5 | 0.39 |      0.42 |    0.37 |   1.14 |    3.08 |     1.1 |       1.1 |    3.1 |     8.3 |
+| median | float32 |  5 | 1.00 |      1.00 |    0.91 |  21.05 |   51.27 |     1.1 |       1.1 |   **23.2** |    **56.5** |
+| mean   | float32 | 31 | 1.54 |      1.49 |    1.05 |   5.94 |   27.57 |     1.5 |       1.4 |    5.7 |    26.2 |
+| median | float32 | 31 | 5.18 |      5.30 |    4.26 | 212.87 |  515.36 |     1.2 |       1.2 |   **49.9** |   **120.9** |
+
+### Sigclip
+
+`sigma=(3, 3)`, `maxiters=5`, `ddof=0`, `cenfunc="median"`, `clip_cen="mean"`. ccdproc uses `maxiters=1` †.
+
+| op             | dtype   |  N |   imc | imc_chain | imc_opt |  ap_bn | ccdproc | imc/opt | chain/opt | ap/opt | ccd/opt |
+| -------------- | ------- | --: | ----: | --------: | ------: | -----: | ------: | ------: | --------: | -----: | ------: |
+| sigclip_mean   | uint8   |  5 |  1.92 |      5.37 |    1.57 |  11.64 |   15.35 |    1.23 |      3.42 |   7.42 |    9.79 |
+| sigclip_median | uint8   |  5 |  2.17 |      6.06 |    1.69 |  30.90 |   62.57 |    1.28 |      3.58 |  18.23 |   36.93 |
+| sigclip_mean   | uint8   | 31 |  9.28 |     21.15 |    6.87 | 108.48 | 137.58† |    1.35 |      3.08 |  15.79 |   20.02 |
+| sigclip_median | uint8   | 31 | 11.18 |     23.68 |    9.69 | 314.21 | 611.53† |    1.15 |      2.44 |  32.44 |   63.13 |
+| sigclip_mean   | uint16  |  5 |  2.01 |      5.53 |    1.65 |  11.75 |   15.51 |    1.22 |      3.35 |   7.13 |    9.41 |
+| sigclip_median | uint16  |  5 |  2.10 |      5.92 |    1.76 |  30.98 |   63.11 |    1.19 |      3.35 |  17.56 |   35.78 |
+| sigclip_mean   | uint16  | 31 |  9.20 |     20.22 |    7.03 | 110.74 | 142.30† |    1.31 |      2.88 |  15.75 |   20.24 |
+| sigclip_median | uint16  | 31 | 11.34 |     24.12 |    9.56 | 323.22 | 629.36† |    1.19 |      2.52 |  33.82 |   65.85 |
+| sigclip_mean   | int16   |  5 |  1.92 |      5.38 |    1.61 |  11.69 |   15.63 |    1.19 |      3.34 |   7.25 |    9.68 |
+| sigclip_median | int16   |  5 |  2.11 |      5.96 |    1.85 |  30.98 |   63.09 |    1.14 |      3.21 |  16.71 |   34.02 |
+| sigclip_mean   | int16   | 31 |  9.24 |     20.60 |    6.93 | 110.92 | 142.66† |    1.33 |      2.97 |  15.99 |   20.57 |
+| sigclip_median | int16   | 31 | 11.75 |     23.84 |    9.15 | 320.43 | 628.88† |    1.28 |      2.61 |  35.03 |   68.75 |
+| sigclip_mean   | int32   |  5 |  2.16 |      6.23 |    1.63 |  12.06 |   16.00 |    1.32 |      3.81 |   7.38 |    9.79 |
+| sigclip_median | int32   |  5 |  2.18 |      6.53 |    1.82 |  31.51 |   64.32 |    1.19 |      3.58 |  17.27 |   35.25 |
+| sigclip_mean   | int32   | 31 | 10.69 |     24.54 |    7.37 | 112.88 | 144.04† |    1.45 |      3.33 |  15.32 |   19.55 |
+| sigclip_median | int32   | 31 | 13.43 |     27.97 |   10.09 | 322.34 | 634.16† |    1.33 |      2.77 |  31.95 |   62.86 |
+| sigclip_mean   | float32 |  5 |  1.61 |      5.07 |    1.60 |  11.65 |   15.80 |    1.00 |      3.17 |   7.28 |    9.87 |
+| sigclip_median | float32 |  5 |  1.87 |      5.81 |    1.78 |  31.76 |   63.60 |    1.05 |      3.26 |  **17.81** |   **35.66** |
+| sigclip_mean   | float32 | 31 |  7.39 |     19.41 |    6.87 | 110.03 | 142.60† |    1.08 |      2.82 |  16.01 |   20.75 |
+| sigclip_median | float32 | 31 |  9.54 |     22.54 |    9.08 | 322.20 | 630.67† |    1.05 |      2.48 |  **35.48** |   **69.44** |
+
+## 4. With Mask (~2% pixels masked per frame)
+
+### Simple
+
+| op     | dtype   |  N |   imc | imc_chain | imc_opt |  ap_bn | ccdproc | imc/opt | chain/opt | ap/opt | ccd/opt |
+| ------ | ------- | --: | ----: | --------: | ------: | -----: | ------: | ------: | --------: | -----: | ------: |
+| mean   | uint8   |  5 |  1.19 |      1.26 |    0.68 |   2.16 |    3.42 |     1.8 |       1.9 |    3.2 |     5.1 |
+| median | uint8   |  5 |  1.94 |      1.83 |    1.35 |  22.93 |   54.37 |     1.4 |       1.4 |   17.0 |    40.4 |
+| mean   | uint8   | 31 |  7.10 |      6.81 |    4.18 |  12.02 |   29.90 |     1.7 |       1.6 |    2.9 |     7.1 |
+| median | uint8   | 31 | 10.35 |     10.01 |    6.64 | 221.46 |  513.60 |     1.6 |       1.5 |   33.3 |    77.3 |
+| mean   | uint16  |  5 |  1.22 |      1.19 |    0.69 |   2.09 |    3.50 |     1.8 |       1.7 |    3.0 |     5.1 |
+| median | uint16  |  5 |  1.90 |      1.90 |    1.38 |  22.64 |   53.66 |     1.4 |       1.4 |   16.4 |    38.9 |
+| mean   | uint16  | 31 |  7.41 |      7.14 |    3.47 |  12.17 |   30.06 |     2.1 |       2.1 |    3.5 |     8.7 |
+| median | uint16  | 31 | 10.41 |     10.18 |    7.22 | 225.31 |  524.08 |     1.4 |       1.4 |   31.2 |    72.6 |
+| mean   | int16   |  5 |  1.19 |      1.23 |    0.68 |   2.13 |    3.50 |     1.7 |       1.8 |    3.1 |     5.1 |
+| median | int16   |  5 |  1.85 |      1.96 |    1.31 |  22.84 |   53.64 |     1.4 |       1.5 |   17.4 |    40.9 |
+| mean   | int16   | 31 |  7.73 |      6.89 |    4.04 |  12.07 |   29.76 |     1.9 |       1.7 |    3.0 |     7.4 |
+| median | int16   | 31 | 10.13 |     10.22 |    7.23 | 221.46 |  524.65 |     1.4 |       1.4 |   30.6 |    72.6 |
+| mean   | int32   |  5 |  1.42 |      1.45 |    0.76 |   2.15 |    3.51 |     1.9 |       1.9 |    2.8 |     4.6 |
+| median | int32   |  5 |  2.11 |      2.06 |    1.43 |  22.90 |   55.28 |     1.5 |       1.4 |   16.0 |    38.7 |
+| mean   | int32   | 31 |  8.52 |      8.49 |    4.84 |  12.24 |   30.05 |     1.8 |       1.8 |    2.5 |     6.2 |
+| median | int32   | 31 | 11.40 |     11.71 |    7.11 | 220.92 |  525.46 |     1.6 |       1.6 |   31.1 |    73.9 |
+| mean   | float32 |  5 |  0.97 |      0.93 |    0.76 |   1.87 |    3.22 |     1.3 |       1.2 |    2.5 |     4.2 |
+| median | float32 |  5 |  1.68 |      1.64 |    1.36 |  22.74 |   53.66 |     1.2 |       1.2 |   **16.7** |    **39.4** |
+| mean   | float32 | 31 |  4.80 |      5.64 |    4.18 |  10.79 |   28.70 |     1.1 |       1.3 |    2.6 |     6.9 |
+| median | float32 | 31 |  8.16 |      8.26 |    7.55 | 222.21 |  520.42 |     1.1 |       1.1 |   **29.4** |    **68.9** |
+
+### Sigclip
+
+`sigma=(3, 3)`, `maxiters=5`, `ddof=0`, `cenfunc="median"`, `clip_cen="mean"`. ccdproc uses `maxiters=1` †.
+
+| op             | dtype   |  N |   imc | imc_chain | imc_opt |  ap_bn | ccdproc | imc/opt | chain/opt | ap/opt | ccd/opt |
+| -------------- | ------- | --: | ----: | --------: | ------: | -----: | ------: | ------: | --------: | -----: | ------: |
+| sigclip_mean   | uint8   |  5 |  2.69 |      5.86 |    1.71 |  13.40 |   16.27 |    1.57 |      3.42 |   7.83 |    9.50 |
+| sigclip_median | uint8   |  5 |  2.79 |      6.62 |    1.77 |  33.20 |   65.79 |    1.57 |      3.74 |  18.72 |   37.10 |
+| sigclip_mean   | uint8   | 31 | 13.65 |     23.84 |    7.92 | 121.33 | 139.87† |    1.72 |      3.01 |  15.32 |   17.66 |
+| sigclip_median | uint8   | 31 | 16.47 |     27.94 |   11.39 | 329.44 | 623.07† |    1.45 |      2.45 |  28.91 |   54.69 |
+| sigclip_mean   | uint16  |  5 |  2.54 |      5.85 |    1.61 |  12.96 |   15.97 |    1.57 |      3.63 |   8.03 |    9.89 |
+| sigclip_median | uint16  |  5 |  2.74 |      6.76 |    1.92 |  33.74 |   65.54 |    1.43 |      3.52 |  17.57 |   34.13 |
+| sigclip_mean   | uint16  | 31 | 13.85 |     23.96 |    8.09 | 120.70 | 142.25† |    1.71 |      2.96 |  14.91 |   17.58 |
+| sigclip_median | uint16  | 31 | 17.47 |     28.22 |   10.83 | 330.36 | 635.34† |    1.61 |      2.61 |  30.51 |   58.67 |
+| sigclip_mean   | int16   |  5 |  2.48 |      5.90 |    1.60 |  13.00 |   15.97 |    1.55 |      3.69 |   8.14 |    9.99 |
+| sigclip_median | int16   |  5 |  2.72 |      6.77 |    1.80 |  33.36 |   66.94 |    1.51 |      3.77 |  18.56 |   37.25 |
+| sigclip_mean   | int16   | 31 | 13.93 |     24.16 |    8.38 | 121.12 | 142.77† |    1.66 |      2.88 |  14.45 |   17.03 |
+| sigclip_median | int16   | 31 | 16.67 |     27.76 |   11.25 | 336.98 | 642.56† |    1.48 |      2.47 |  29.95 |   57.12 |
+| sigclip_mean   | int32   |  5 |  2.67 |      6.68 |    1.61 |  13.30 |   16.16 |    1.66 |      4.14 |   8.24 |   10.01 |
+| sigclip_median | int32   |  5 |  2.86 |      7.17 |    1.77 |  34.00 |   66.45 |    1.61 |      4.05 |  19.18 |   37.49 |
+| sigclip_mean   | int32   | 31 | 15.66 |     28.34 |    8.94 | 121.58 | 142.82† |    1.75 |      3.17 |  13.61 |   15.98 |
+| sigclip_median | int32   | 31 | 18.30 |     31.20 |   11.41 | 332.24 | 643.49† |    1.60 |      2.74 |  29.13 |   56.42 |
+| sigclip_mean   | float32 |  5 |  2.28 |      5.69 |    1.52 |  12.79 |   15.67 |    1.50 |      3.75 |   8.43 |   10.33 |
+| sigclip_median | float32 |  5 |  2.48 |      6.38 |    1.92 |  33.86 |   66.55 |    1.30 |      3.33 |  **17.67** |   **34.73** |
+| sigclip_mean   | float32 | 31 | 11.81 |     22.68 |    8.01 | 121.10 | 141.90† |    1.47 |      2.83 |  15.11 |   17.71 |
+| sigclip_median | float32 | 31 | 14.70 |     25.96 |   11.46 | 332.39 | 635.18† |    1.28 |      2.26 |  **29.00** |   **55.41** |
