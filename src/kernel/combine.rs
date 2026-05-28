@@ -3,7 +3,7 @@
 //!
 //! Parallelism: rayon over the flattened (H * W) output index.
 
-use ndarray::{Array2, ArrayView3};
+use ndarray::{Array1, Array2, Array3, ArrayView3};
 use numpy::Element;
 use rayon::prelude::*;
 
@@ -368,6 +368,90 @@ fn nanlmedian_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize, b
     *value
 }
 
+#[inline]
+fn percentile_from_sorted<T: Float>(sorted: &[T], q: f64) -> T {
+    if sorted.is_empty() {
+        return T::nan();
+    }
+    let rank = (q / 100.0) * (sorted.len() - 1) as f64;
+    let lower = rank.floor() as usize;
+    let upper = rank.ceil() as usize;
+    if lower == upper {
+        return sorted[lower];
+    }
+    let fraction = rank - lower as f64;
+    let lo = sorted[lower].to_f64();
+    let hi = sorted[upper].to_f64();
+    T::from_f64(lo + (hi - lo) * fraction)
+}
+
+#[derive(Clone, Copy)]
+struct PercentileRank {
+    lower: usize,
+    upper: usize,
+    fraction: f64,
+}
+
+#[inline]
+fn percentile_rank(count: usize, q: f64) -> PercentileRank {
+    let rank = (q / 100.0) * (count - 1) as f64;
+    let lower = rank.floor() as usize;
+    let upper = rank.ceil() as usize;
+    PercentileRank {
+        lower,
+        upper,
+        fraction: rank - lower as f64,
+    }
+}
+
+#[inline]
+fn unique_percentile_indices(ranks: &[PercentileRank]) -> Vec<usize> {
+    let mut indices = Vec::<usize>::with_capacity(ranks.len() * 2);
+    for rank in ranks {
+        indices.push(rank.lower);
+        indices.push(rank.upper);
+    }
+    indices.sort_unstable();
+    indices.dedup();
+    indices
+}
+
+#[inline]
+fn selection_rank_budget(count: usize) -> usize {
+    usize::BITS as usize - count.leading_zeros() as usize - 1
+}
+
+fn percentile_values<T: Float>(buf: &mut [T], qs: &[f64], out: &mut [T]) {
+    debug_assert_eq!(qs.len(), out.len());
+    if buf.is_empty() {
+        out.fill(T::nan());
+        return;
+    }
+
+    let ranks: Vec<PercentileRank> = qs.iter().map(|&q| percentile_rank(buf.len(), q)).collect();
+    let needed_indices = unique_percentile_indices(&ranks);
+
+    if needed_indices.len() <= selection_rank_budget(buf.len()) {
+        let mut selected = Vec::<T>::with_capacity(needed_indices.len());
+        let mut start = 0usize;
+        for &idx in &needed_indices {
+            let (_, value, _) = buf[start..].select_nth_unstable_by(idx - start, cmp_float);
+            selected.push(*value);
+            start = idx + 1;
+        }
+        for (out_px, rank) in out.iter_mut().zip(ranks.iter()) {
+            let lo = selected[needed_indices.binary_search(&rank.lower).unwrap()].to_f64();
+            let hi = selected[needed_indices.binary_search(&rank.upper).unwrap()].to_f64();
+            *out_px = T::from_f64(lo + (hi - lo) * rank.fraction);
+        }
+    } else {
+        buf.sort_unstable_by(cmp_float);
+        for (out_px, &q) in out.iter_mut().zip(qs) {
+            *out_px = percentile_from_sorted(buf, q);
+        }
+    }
+}
+
 // ---------- driver ----------
 
 /// Combine `arr` (N, H, W) along axis 0. NaN-aware.
@@ -485,6 +569,54 @@ pub fn variance_mean_axis0<T: Float>(arr: &ArrayView3<T>, ddof: usize) -> (Array
     }
 
     (var, mean)
+}
+
+/// Return NaN-aware percentiles along axis 0.
+///
+/// The result shape is `(H, W, Q)` so each output pixel owns one contiguous
+/// percentile vector. Python moves the percentile axis to the front for the
+/// public NumPy-compatible shape.
+pub fn percentiles_axis0<T: Float>(arr: &ArrayView3<T>, qs: &[f64]) -> Array3<T> {
+    let (n, h, w) = (arr.shape()[0], arr.shape()[1], arr.shape()[2]);
+    let hw = h * w;
+    let nq = qs.len();
+    let mut out = Array3::<T>::from_elem((h, w, nq), T::nan());
+    if nq == 0 {
+        return out;
+    }
+    let out_slice = out.as_slice_mut().expect("percentile output is contiguous");
+    let data = arr
+        .as_slice_memory_order()
+        .expect("percentile kernel requires contiguous C-order arrays");
+
+    let compute_pixel = |buf: &mut Vec<T>, (pixel, out_q): (usize, &mut [T])| {
+        buf.clear();
+        let mut idx = pixel;
+        for _ in 0..n {
+            let x = data[idx];
+            if x.is_finite() {
+                buf.push(x);
+            }
+            idx += hw;
+        }
+        percentile_values(buf, qs, out_q);
+    };
+
+    if hw >= parallel_threshold() {
+        out_slice
+            .par_chunks_mut(nq)
+            .enumerate()
+            .map_init(|| Vec::<T>::with_capacity(n), compute_pixel)
+            .count();
+    } else {
+        let mut buf = Vec::<T>::with_capacity(n);
+        out_slice
+            .chunks_mut(nq)
+            .enumerate()
+            .for_each(|item| compute_pixel(&mut buf, item));
+    }
+
+    out
 }
 
 pub fn lmedian_axis0_ord<T>(arr: &ArrayView3<T>) -> Array2<T>
@@ -735,6 +867,20 @@ pub fn lmedian_1d<T: Float>(values: &[T]) -> T {
     let idx = (buf.len() - 1) / 2;
     let (_, value, _) = buf.select_nth_unstable_by(idx, cmp_float);
     *value
+}
+
+pub fn percentiles_1d<T: Float>(values: &[T], qs: &[f64]) -> Array1<f64> {
+    let mut buf = Vec::<T>::with_capacity(values.len());
+    compact_finite_1d(values, &mut buf);
+    let mut out = vec![f64::NAN; qs.len()];
+    if !buf.is_empty() {
+        let mut out_t = vec![T::nan(); qs.len()];
+        percentile_values(&mut buf, qs, &mut out_t);
+        for (dst, src) in out.iter_mut().zip(out_t) {
+            *dst = src.to_f64();
+        }
+    }
+    Array1::from_vec(out)
 }
 
 pub fn weighted_average_1d<T: Float>(values: &[T], weights: &[f64]) -> T {

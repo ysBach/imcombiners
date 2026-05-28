@@ -61,6 +61,7 @@ __all__ = [
     "minimum",
     "maximum",
     "variance",
+    "percentiles",
     "weighted_average",
     "mean_1d",
     "median_1d",
@@ -69,6 +70,7 @@ __all__ = [
     "min_1d",
     "max_1d",
     "var_1d",
+    "percentiles_1d",
     "wvg_1d",
     # Reject
     "sigclip",
@@ -338,6 +340,40 @@ def variance(
     return result.reshape(trailing)
 
 
+def _prepare_percentile_q(q: object) -> tuple[np.ndarray, bool]:
+    """Validate scalar or 1-D percentile positions."""
+    q_arr = np.asarray(q, dtype=np.float64)
+    scalar = q_arr.ndim == 0
+    if scalar:
+        q_arr = q_arr.reshape(1)
+    elif q_arr.ndim != 1:
+        raise ValueError(f"q must be a scalar or 1-D; got shape {q_arr.shape}")
+    if np.any(~np.isfinite(q_arr)) or np.any((q_arr < 0.0) | (q_arr > 100.0)):
+        raise ValueError("q must be in [0, 100]")
+    return np.ascontiguousarray(q_arr), scalar
+
+
+def percentiles(
+    arr: np.ndarray,
+    q: object,
+    *,
+    validate: bool = True,
+) -> np.ndarray:
+    """Return NaN-aware percentiles along the stack axis.
+
+    `q` may be a scalar or a 1-D sequence of percentile positions in
+    ``[0, 100]``. Interpolation matches NumPy's default linear method.
+    """
+    trailing = arr.shape[1:]
+    q_arr, scalar = _prepare_percentile_q(q)
+    if validate:
+        arr = validate_stack(arr)
+    result = _core.percentiles(arr, q_arr)
+    if scalar:
+        return result[..., 0].reshape(trailing)
+    return np.moveaxis(result, -1, 0).reshape((q_arr.size, *trailing))
+
+
 def weighted_average(
     arr: np.ndarray, weights: np.ndarray, *, validate: bool = True
 ) -> np.ndarray:
@@ -473,6 +509,23 @@ def var_1d(
         )
     values = _prepare_1d_values(values, validate=validate)
     return _core.variance_1d(values, ddof=int(ddof), return_mean=bool(return_mean))
+
+
+def percentiles_1d(values: np.ndarray, q: object, *, validate: bool = True) -> object:
+    """Return NaN-aware percentiles of a 1-D value vector.
+
+    `q` may be a scalar or a 1-D sequence of percentile positions in
+    ``[0, 100]``. Interpolation matches NumPy's default linear method.
+    """
+    q_arr, scalar = _prepare_percentile_q(q)
+    if not validate:
+        result = _core.percentiles_1d(values, q_arr)
+    else:
+        values = _prepare_1d_values(values, validate=validate)
+        result = _core.percentiles_1d(values, q_arr)
+    if scalar:
+        return result[0]
+    return result
 
 
 def wvg_1d(values: np.ndarray, weights: np.ndarray, *, validate: bool = True) -> object:

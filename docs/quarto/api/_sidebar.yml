@@ -22,6 +22,7 @@ website:
       - api/kernels.minimum.qmd
       - api/kernels.maximum.qmd
       - api/kernels.variance.qmd
+      - api/kernels.percentiles.qmd
       - api/kernels.weighted_average.qmd
       - api/kernels.mean_1d.qmd
       - api/kernels.median_1d.qmd
@@ -30,6 +31,7 @@ website:
       - api/kernels.min_1d.qmd
       - api/kernels.max_1d.qmd
       - api/kernels.var_1d.qmd
+      - api/kernels.percentiles_1d.qmd
       - api/kernels.wvg_1d.qmd
       - api/kernels.grow_mask.qmd
       - api/kernels.sigclip.qmd

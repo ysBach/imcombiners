@@ -56,6 +56,7 @@ from .kernels import (
     minimum,
     minmax,
     pclip,
+    percentiles,
     set_minmax_1d_parallel_threshold,
     set_parallel_threshold,
     set_rayon_num_threads,
@@ -97,6 +98,7 @@ __all__ = [
     "linearclip",
     "minmax",
     "pclip",
+    "percentiles",
     "grow_mask",
     # Zero/scale helper
     "resolve_zero_scale",

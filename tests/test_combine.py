@@ -107,6 +107,45 @@ def test_kernel_variance_return_mean_keeps_mean_when_variance_is_undefined():
     np.testing.assert_allclose(mean[0, 0], 1.0)
 
 
+def test_kernel_percentiles_matches_numpy_nanpercentile_scalar_q():
+    rng = np.random.default_rng(20260529)
+    arr = rng.normal(size=(9, 3, 4)).astype(np.float32)
+    arr[0, 1, 2] = np.nan
+
+    out = imc.percentiles(arr, 25.0)
+
+    np.testing.assert_allclose(out, np.nanpercentile(arr, 25.0, axis=0), rtol=1e-6)
+    assert out.shape == arr.shape[1:]
+
+
+def test_kernel_percentiles_accepts_multiple_q_with_leading_q_axis():
+    rng = np.random.default_rng(20260529)
+    arr = rng.normal(size=(9, 3, 4)).astype(np.float64)
+    arr[0, 1, 2] = np.nan
+    q = np.array([0.0, 25.0, 50.0, 100.0])
+
+    out = imc.percentiles(arr, q)
+
+    np.testing.assert_allclose(out, np.nanpercentile(arr, q, axis=0), rtol=1e-12)
+    assert out.shape == (4, *arr.shape[1:])
+
+
+def test_kernel_percentiles_returns_nan_for_all_nan_stack_slice():
+    arr = np.array(
+        [
+            [[np.nan, 1.0]],
+            [[np.nan, 3.0]],
+            [[np.nan, 5.0]],
+        ],
+        dtype=np.float32,
+    )
+
+    out = imc.percentiles(arr, 50.0)
+
+    assert np.isnan(out[0, 0])
+    np.testing.assert_allclose(out[0, 1], 3.0)
+
+
 def test_ndcombine_variance_after_rejection_matches_final_mask():
     arr = np.array([1.0, 2.0, 100.0, 4.0, 5.0], dtype=np.float32).reshape(5, 1, 1)
     out, mask_rej, mask_thresh, *_ = ndcombine(

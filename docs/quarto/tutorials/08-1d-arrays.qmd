@@ -25,6 +25,7 @@ values[1] += 700.0
 
 print(imck.mean_1d(values))
 print(imck.median_1d(values))
+print(imck.percentiles_1d(values, [16.0, 50.0, 84.0]))
 var, mean = imck.var_1d(values, return_mean=True)
 print(var, mean)
 ```
@@ -36,6 +37,7 @@ Names use Python's common words for 1-D utilities:
 | `mean_1d(values)` | NaN-aware mean |
 | `median_1d(values)` | NaN-aware median |
 | `lmedian_1d(values)` | lower median, matching IRAF/imcombine convention |
+| `percentiles_1d(values, q)` | NaN-aware scalar or multiple percentiles, matching NumPy's default linear interpolation |
 | `sum_1d(values)` | NaN-aware sum |
 | `min_1d(values)` | NaN-aware minimum |
 | `max_1d(values)` | NaN-aware maximum |

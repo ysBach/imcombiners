@@ -92,6 +92,7 @@ quartodoc:
         - kernels.minimum
         - kernels.maximum
         - kernels.variance
+        - kernels.percentiles
         - kernels.weighted_average
         - kernels.mean_1d
         - kernels.median_1d
@@ -100,6 +101,7 @@ quartodoc:
         - kernels.min_1d
         - kernels.max_1d
         - kernels.var_1d
+        - kernels.percentiles_1d
         - kernels.wvg_1d
         - kernels.grow_mask
         - kernels.sigclip

@@ -7,7 +7,8 @@ use pyo3::types::PyTuple;
 
 use crate::kernel::combine::{
     combine_axis0, lmedian_1d as k_lmedian_1d, lmedian_axis0_ord, max_1d as k_max_1d,
-    mean_1d as k_mean_1d, median_1d as k_median_1d, min_1d as k_min_1d, sum_1d as k_sum_1d,
+    mean_1d as k_mean_1d, median_1d as k_median_1d, min_1d as k_min_1d,
+    percentiles_1d as k_percentiles_1d, percentiles_axis0, sum_1d as k_sum_1d,
     variance_1d as k_variance_1d, variance_mean_1d as k_variance_mean_1d, variance_mean_axis0,
     weighted_average_1d as k_weighted_average_1d, CombineKind,
 };
@@ -23,6 +24,7 @@ pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(minimum, m)?)?;
     m.add_function(wrap_pyfunction!(maximum, m)?)?;
     m.add_function(wrap_pyfunction!(variance, m)?)?;
+    m.add_function(wrap_pyfunction!(percentiles, m)?)?;
     m.add_function(wrap_pyfunction!(weighted_average, m)?)?;
     m.add_function(wrap_pyfunction!(mean_1d, m)?)?;
     m.add_function(wrap_pyfunction!(median_1d, m)?)?;
@@ -31,6 +33,7 @@ pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(min_1d, m)?)?;
     m.add_function(wrap_pyfunction!(max_1d, m)?)?;
     m.add_function(wrap_pyfunction!(variance_1d, m)?)?;
+    m.add_function(wrap_pyfunction!(percentiles_1d, m)?)?;
     m.add_function(wrap_pyfunction!(weighted_average_1d, m)?)?;
     // Compat shim with string dispatch (used by IRAF-style `ndcombine`).
     m.add_function(wrap_pyfunction!(combine, m)?)?;
@@ -89,6 +92,29 @@ fn variance<'py>(
         |v| combine_axis0::<f32>(&v, CombineKind::Variance, None, ddof),
         |v| combine_axis0::<f64>(&v, CombineKind::Variance, None, ddof),
     )
+}
+
+#[pyfunction]
+#[pyo3(signature = (arr, q))]
+fn percentiles<'py>(
+    py: Python<'py>,
+    arr: &Bound<'py, PyAny>,
+    q: PyReadonlyArray1<'py, f64>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let qs = q.as_slice().unwrap();
+    if let Ok(a) = arr.cast::<PyArray3<f32>>() {
+        let a = a.readonly();
+        let out = percentiles_axis0::<f32>(&a.as_array(), qs);
+        Ok(out.into_pyarray(py).into_any())
+    } else if let Ok(a) = arr.cast::<PyArray3<f64>>() {
+        let a = a.readonly();
+        let out = percentiles_axis0::<f64>(&a.as_array(), qs);
+        Ok(out.into_pyarray(py).into_any())
+    } else {
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "arr must be a 3-D float32 or float64 NumPy array",
+        ))
+    }
 }
 
 #[pyfunction]
@@ -185,6 +211,31 @@ fn variance_1d<'py>(
                 .into_pyobject(py)?
                 .into_any())
         }
+    } else {
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "values must be a 1-D float32 or float64 NumPy array",
+        ))
+    }
+}
+
+#[pyfunction]
+#[pyo3(signature = (values, q))]
+fn percentiles_1d<'py>(
+    py: Python<'py>,
+    values: &Bound<'py, PyAny>,
+    q: PyReadonlyArray1<'py, f64>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let qs = q.as_slice().unwrap();
+    if let Ok(a) = values.cast::<numpy::PyArray1<f32>>() {
+        let a = a.readonly();
+        let values = a.as_slice().unwrap();
+        validate_values_len(values.len())?;
+        Ok(k_percentiles_1d(values, qs).into_pyarray(py).into_any())
+    } else if let Ok(a) = values.cast::<numpy::PyArray1<f64>>() {
+        let a = a.readonly();
+        let values = a.as_slice().unwrap();
+        validate_values_len(values.len())?;
+        Ok(k_percentiles_1d(values, qs).into_pyarray(py).into_any())
     } else {
         Err(pyo3::exceptions::PyTypeError::new_err(
             "values must be a 1-D float32 or float64 NumPy array",

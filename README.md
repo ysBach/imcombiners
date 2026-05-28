@@ -52,8 +52,8 @@ See [docs/quarto/index.qmd](docs/quarto/index.qmd#first-look) for the detailed e
 
 ## Features
 
-- Stack combination: mean, median, lower median, sum, min, max, variance, and weighted average.
-- 1-D utilities: `imcombiners.kernels` exposes `_1d` functions such as `median_1d`, `var_1d`, `wvg_1d`, `sigclip_mask_1d`, and `minmax_combine_1d` for generic vectors, flattened images, light curves, and detector samples.
+- Stack combination: mean, median, lower median, percentiles, sum, min, max, variance, and weighted average.
+- 1-D utilities: `imcombiners.kernels` exposes `_1d` functions such as `median_1d`, `percentiles_1d`, `var_1d`, `wvg_1d`, `sigclip_mask_1d`, and `minmax_combine_1d` for generic vectors, flattened images, light curves, and detector samples.
 - Pixel rejection: sigma, CCD noise-model, iterative linear, min/max, and IRAF-style percentile clipping. Rejection centers accept mean, median, and lower median (`lmedian`/`lmed`).
 - Pipeline helpers: threshold masking, zero/scale normalization, offset padding, masks, `diagnostics=None|"simple"|"full"`, and output-only fast paths.
 - Performance docs: see [docs/quarto/performance/max-performance.qmd](docs/quarto/performance/max-performance.qmd), [docs/quarto/performance/image-benchmarks.qmd](docs/quarto/performance/image-benchmarks.qmd), and [docs/quarto/performance/array-1d-benchmarks.qmd](docs/quarto/performance/array-1d-benchmarks.qmd).

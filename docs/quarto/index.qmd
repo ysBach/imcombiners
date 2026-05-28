@@ -78,7 +78,7 @@ One dtype detail differs by mode: direct kernel calls via `imck.lmedian(int_stac
 
 ## 2. Features
 
-- Combine methods: mean, median, lower median (`lmed`), sum, min, max, variance, and weighted average (`wvg`).
+- Combine methods: mean, median, lower median (`lmed`), percentiles, sum, min, max, variance, and weighted average (`wvg`).
 - Rejection methods: sigma clipping, CCD-noise clipping, iterative center-relative linear clipping, min/max clipping, and IRAF-style `pclip`.
 - Optional threshold masking, zero/scale normalization, and integer-pixel offset padding are available for common image-stack workflows.
 - Iterative sigma/CCD/linear clipping, `nkeep` rollback, min/max counts, and scalar `pclip` rank-offset behavior follow the supported IRAF compatibility model.

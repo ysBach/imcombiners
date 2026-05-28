@@ -57,6 +57,32 @@ def test_var_1d_return_mean_keeps_mean_when_variance_is_undefined():
     np.testing.assert_allclose(mean, 1.0)
 
 
+def test_percentiles_1d_matches_numpy_nanpercentile_for_scalar_q():
+    values = np.array([1.0, np.nan, 7.0, 4.0, 10.0], dtype=np.float32)
+
+    out = imck.percentiles_1d(values, 25.0)
+
+    np.testing.assert_allclose(out, np.nanpercentile(values, 25.0), rtol=1e-6)
+    assert np.isscalar(out)
+
+
+def test_percentiles_1d_sorts_once_for_multiple_q_shape():
+    values = np.array([1.0, np.nan, 7.0, 4.0, 10.0], dtype=np.float64)
+    q = np.array([0.0, 25.0, 50.0, 100.0])
+
+    out = imck.percentiles_1d(values, q)
+
+    np.testing.assert_allclose(out, np.nanpercentile(values, q), rtol=1e-12)
+    assert out.shape == (4,)
+
+
+def test_percentiles_1d_rejects_out_of_range_q():
+    values = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+
+    with pytest.raises(ValueError, match="q must be in \\[0, 100\\]"):
+        imck.percentiles_1d(values, 101.0)
+
+
 def test_lmedian_1d_returns_lower_middle_and_preserves_integer_dtype():
     values = np.array([4, 1, 3, 2], dtype=np.uint16)
 

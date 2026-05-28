@@ -30,6 +30,7 @@ Advanced one-operation primitives for custom pipeline layers.
 | [kernels.minimum](kernels.minimum.qmd#imcombiners.kernels.minimum) | Return the NaN-aware minimum along the stack axis. |
 | [kernels.maximum](kernels.maximum.qmd#imcombiners.kernels.maximum) | Return the NaN-aware maximum along the stack axis. |
 | [kernels.variance](kernels.variance.qmd#imcombiners.kernels.variance) | Return the NaN-aware variance along the stack axis. |
+| [kernels.percentiles](kernels.percentiles.qmd#imcombiners.kernels.percentiles) | Return NaN-aware percentiles along the stack axis. |
 | [kernels.weighted_average](kernels.weighted_average.qmd#imcombiners.kernels.weighted_average) | Return the NaN-aware weighted average along the stack axis. |
 | [kernels.mean_1d](kernels.mean_1d.qmd#imcombiners.kernels.mean_1d) | Return the NaN-aware mean of a 1-D value vector. |
 | [kernels.median_1d](kernels.median_1d.qmd#imcombiners.kernels.median_1d) | Return the NaN-aware median of a 1-D value vector. |
@@ -38,6 +39,7 @@ Advanced one-operation primitives for custom pipeline layers.
 | [kernels.min_1d](kernels.min_1d.qmd#imcombiners.kernels.min_1d) | Return the NaN-aware minimum of a 1-D value vector. |
 | [kernels.max_1d](kernels.max_1d.qmd#imcombiners.kernels.max_1d) | Return the NaN-aware maximum of a 1-D value vector. |
 | [kernels.var_1d](kernels.var_1d.qmd#imcombiners.kernels.var_1d) | Return the NaN-aware variance of a 1-D value vector. |
+| [kernels.percentiles_1d](kernels.percentiles_1d.qmd#imcombiners.kernels.percentiles_1d) | Return NaN-aware percentiles of a 1-D value vector. |
 | [kernels.wvg_1d](kernels.wvg_1d.qmd#imcombiners.kernels.wvg_1d) | Return the NaN-aware weighted average of a 1-D value vector. |
 | [kernels.grow_mask](kernels.grow_mask.qmd#imcombiners.kernels.grow_mask) | Dilate a stack mask over spatial axes by an exact Euclidean radius. |
 | [kernels.sigclip](kernels.sigclip.qmd#imcombiners.kernels.sigclip) | Sigma-clipping rejection. |
