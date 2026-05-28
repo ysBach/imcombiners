@@ -87,6 +87,26 @@ def test_top_level_variance_matches_nanvar():
     np.testing.assert_allclose(out, np.nanvar(arr, axis=0, ddof=0), rtol=1e-5)
 
 
+def test_kernel_variance_can_return_mean_from_same_pass():
+    rng = np.random.default_rng(20250311)
+    arr = rng.normal(0, 1, (8, 3, 4)).astype(np.float32)
+    arr[0, 1, 2] = np.nan
+
+    var, mean = imc.variance(arr, ddof=1, return_mean=True)
+
+    np.testing.assert_allclose(var, np.nanvar(arr, axis=0, ddof=1), rtol=1e-5)
+    np.testing.assert_allclose(mean, np.nanmean(arr, axis=0), rtol=1e-5)
+
+
+def test_kernel_variance_return_mean_keeps_mean_when_variance_is_undefined():
+    arr = np.array([1.0, np.nan], dtype=np.float32).reshape(2, 1, 1)
+
+    var, mean = imc.variance(arr, ddof=1, return_mean=True)
+
+    assert np.isnan(var[0, 0])
+    np.testing.assert_allclose(mean[0, 0], 1.0)
+
+
 def test_ndcombine_variance_after_rejection_matches_final_mask():
     arr = np.array([1.0, 2.0, 100.0, 4.0, 5.0], dtype=np.float32).reshape(5, 1, 1)
     out, mask_rej, mask_thresh, *_ = ndcombine(

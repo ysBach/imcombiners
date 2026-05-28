@@ -850,7 +850,9 @@ class Combiner:
             validate=self._validate,
         ).reshape(self._trailing_shape)
 
-    def variance(self, *, ddof: int = 1) -> NDArray:
+    def variance(
+        self, *, ddof: int = 1, return_mean: bool = False
+    ) -> NDArray | tuple[NDArray, NDArray]:
         """Return variance of final valid values along axis 0.
 
         Valid values are finite inputs not masked by the input mask and not
@@ -866,18 +868,34 @@ class Combiner:
             `NaN`.
             Default is ``1``, i.e., Sample variance. Use ``ddof=0`` for
             population variance.
+        return_mean : bool, optional
+            If `True`, also return the per-pixel mean computed from the same
+            final valid values and the same Rust accumulation pass.
 
         Returns
         -------
         variance : ndarray, shape (*spatial)
             Per-pixel variance. Use ``np.sqrt(var)`` if an error or
             standard-deviation map is needed.
+        mean : ndarray, shape (*spatial)
+            Returned only when `return_mean=True`.
         """
         if self.mask is not None:
             arr_eff = mask_as_nan(self.arr, self.mask)
         else:
             arr_eff = self.arr
-        result = kernels.variance(arr_eff, ddof=ddof, validate=self._validate)
+        if return_mean:
+            result = kernels.variance(
+                arr_eff,
+                ddof=ddof,
+                return_mean=True,
+                validate=self._validate,
+            )
+        else:
+            result = kernels.variance(arr_eff, ddof=ddof, validate=self._validate)
+        if return_mean:
+            var, mean = result
+            return var.reshape(self._trailing_shape), mean.reshape(self._trailing_shape)
         return result.reshape(self._trailing_shape)
 
     # ---- utilities --------------------------------------------------------------

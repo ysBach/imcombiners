@@ -3,11 +3,13 @@
 use numpy::{IntoPyArray, PyArray3, PyArrayMethods, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyTuple;
 
 use crate::kernel::combine::{
     combine_axis0, lmedian_1d as k_lmedian_1d, lmedian_axis0_ord, max_1d as k_max_1d,
     mean_1d as k_mean_1d, median_1d as k_median_1d, min_1d as k_min_1d, sum_1d as k_sum_1d,
-    variance_1d as k_variance_1d, weighted_average_1d as k_weighted_average_1d, CombineKind,
+    variance_1d as k_variance_1d, variance_mean_1d as k_variance_mean_1d, variance_mean_axis0,
+    weighted_average_1d as k_weighted_average_1d, CombineKind,
 };
 use crate::kernel::utils::Float;
 
@@ -59,12 +61,28 @@ simple_combine!(minimum, CombineKind::Min);
 simple_combine!(maximum, CombineKind::Max);
 
 #[pyfunction]
-#[pyo3(signature = (arr, *, ddof = 0))]
+#[pyo3(signature = (arr, *, ddof = 0, return_mean = false))]
 fn variance<'py>(
     py: Python<'py>,
     arr: &Bound<'py, PyAny>,
     ddof: usize,
+    return_mean: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
+    if return_mean {
+        if let Ok(a) = arr.cast::<PyArray3<f32>>() {
+            let a = a.readonly();
+            let (var, mean) = variance_mean_axis0::<f32>(&a.as_array(), ddof);
+            let var = var.into_pyarray(py).into_any();
+            let mean = mean.into_pyarray(py).into_any();
+            return Ok(PyTuple::new(py, [var, mean]).unwrap().into_any());
+        } else if let Ok(a) = arr.cast::<PyArray3<f64>>() {
+            let a = a.readonly();
+            let (var, mean) = variance_mean_axis0::<f64>(&a.as_array(), ddof);
+            let var = var.into_pyarray(py).into_any();
+            let mean = mean.into_pyarray(py).into_any();
+            return Ok(PyTuple::new(py, [var, mean]).unwrap().into_any());
+        }
+    }
     dispatch_combine(
         py,
         arr,
@@ -130,18 +148,43 @@ simple_combine_1d!(min_1d, k_min_1d);
 simple_combine_1d!(max_1d, k_max_1d);
 
 #[pyfunction]
-#[pyo3(signature = (values, *, ddof = 0))]
-fn variance_1d(values: &Bound<'_, PyAny>, ddof: usize) -> PyResult<f64> {
+#[pyo3(signature = (values, *, ddof = 0, return_mean = false))]
+fn variance_1d<'py>(
+    py: Python<'py>,
+    values: &Bound<'py, PyAny>,
+    ddof: usize,
+    return_mean: bool,
+) -> PyResult<Bound<'py, PyAny>> {
     if let Ok(a) = values.cast::<numpy::PyArray1<f32>>() {
         let a = a.readonly();
         let values = a.as_slice().unwrap();
         validate_values_len(values.len())?;
-        Ok(k_variance_1d(values, ddof).to_f64())
+        if return_mean {
+            let (var, mean) = k_variance_mean_1d(values, ddof);
+            Ok(PyTuple::new(py, [var.to_f64(), mean.to_f64()])
+                .unwrap()
+                .into_any())
+        } else {
+            Ok(k_variance_1d(values, ddof)
+                .to_f64()
+                .into_pyobject(py)?
+                .into_any())
+        }
     } else if let Ok(a) = values.cast::<numpy::PyArray1<f64>>() {
         let a = a.readonly();
         let values = a.as_slice().unwrap();
         validate_values_len(values.len())?;
-        Ok(k_variance_1d(values, ddof).to_f64())
+        if return_mean {
+            let (var, mean) = k_variance_mean_1d(values, ddof);
+            Ok(PyTuple::new(py, [var.to_f64(), mean.to_f64()])
+                .unwrap()
+                .into_any())
+        } else {
+            Ok(k_variance_1d(values, ddof)
+                .to_f64()
+                .into_pyobject(py)?
+                .into_any())
+        }
     } else {
         Err(pyo3::exceptions::PyTypeError::new_err(
             "values must be a 1-D float32 or float64 NumPy array",

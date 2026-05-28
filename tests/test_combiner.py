@@ -598,6 +598,17 @@ def test_variance_via_combiner_matches_final_valid_values():
     np.testing.assert_allclose(out_combine, expected, rtol=1e-5)
 
 
+def test_combiner_variance_can_return_mean_from_final_valid_values():
+    arr = np.array([1.0, 2.0, 100.0, 4.0, 5.0], dtype=np.float32).reshape(5, 1, 1)
+    c = Combiner(arr).reject(MinMaxClip(n_min=0, n_max=1))
+
+    var, mean = c.variance(ddof=1, return_mean=True)
+    arr_eff = np.where(c.mask, np.nan, c.arr)
+
+    np.testing.assert_allclose(var, np.nanvar(arr_eff, axis=0, ddof=1), rtol=1e-5)
+    np.testing.assert_allclose(mean, np.nanmean(arr_eff, axis=0), rtol=1e-5)
+
+
 def test_combiner_variance_owns_implementation(monkeypatch):
     arr = np.arange(12, dtype=np.float32).reshape(3, 2, 2)
     called = {}

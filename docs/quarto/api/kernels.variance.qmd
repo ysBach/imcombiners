@@ -1,7 +1,7 @@
 # kernels.variance { #imcombiners.kernels.variance }
 
 ```python
-kernels.variance(arr, *, ddof=0, validate=True)
+kernels.variance(arr, *, ddof=0, return_mean=False, validate=True)
 ```
 
 Return the NaN-aware variance along the stack axis.
@@ -16,6 +16,10 @@ Return the NaN-aware variance along the stack axis.
 
 :   Delta degrees of freedom. The returned value is ``sum((valid - mean)**2) / (nvalid - ddof)``. Pixels with ``nvalid <= ddof`` return `NaN`.
 
+<code>[**return_mean**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [False]{.parameter-default}</code>
+
+:   If `True`, also return the per-pixel mean from the same accumulation pass.
+
 <code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
 
 :   If `True`, check dimensionality and normalize dtype/contiguity before entering the Rust kernel. If `False`, callers must provide inputs that satisfy the compiled kernel assumptions.
@@ -25,3 +29,7 @@ Return the NaN-aware variance along the stack axis.
 <code>[**variance**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
 
 :   Per-pixel variance of finite values. Use ``np.sqrt(var)`` if a standard-deviation or error-like map is needed.
+
+<code>[**mean**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
+
+:   Returned only when `return_mean=True`.

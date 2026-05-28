@@ -372,12 +372,16 @@ var = np.nanvar(arr_eff, axis=0, ddof=ddof)
 With `Combiner`, the current mask already includes input masks and all rejections:
 
 ```{python}
-var = c_sc.variance(ddof=1)
+var, mean = c_sc.variance(ddof=1, return_mean=True)
 err = np.sqrt(var)
-print(f"variance mean={np.nanmean(var):.2f}, error mean={np.nanmean(err):.2f}")
+print(
+    f"mean={np.nanmean(mean):.2f}, "
+    f"variance mean={np.nanmean(var):.2f}, "
+    f"error mean={np.nanmean(err):.2f}"
+)
 ```
 
-`imcombiners` returns variance only. Use `np.sqrt(var)` if you want an error or standard-deviation map.
+Use `return_mean=True` when you need both variance and mean from the same final valid values. Use `np.sqrt(var)` if you want an error or standard-deviation map.
 
 ## 10. `lmedian`
 

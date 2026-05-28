@@ -25,7 +25,8 @@ values[1] += 700.0
 
 print(imck.mean_1d(values))
 print(imck.median_1d(values))
-print(imck.var_1d(values))
+var, mean = imck.var_1d(values, return_mean=True)
+print(var, mean)
 ```
 
 Names use Python's common words for 1-D utilities:
@@ -38,7 +39,7 @@ Names use Python's common words for 1-D utilities:
 | `sum_1d(values)` | NaN-aware sum |
 | `min_1d(values)` | NaN-aware minimum |
 | `max_1d(values)` | NaN-aware maximum |
-| `var_1d(values, ddof=0)` | NaN-aware variance |
+| `var_1d(values, ddof=0, return_mean=False)` | NaN-aware variance; optionally returns `(variance, mean)` |
 | `wvg_1d(values, weights)` | NaN-aware weighted average |
 
 ## Rejection Masks

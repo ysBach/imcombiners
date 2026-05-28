@@ -316,12 +316,26 @@ def maximum(arr: np.ndarray, *, validate: bool = True) -> np.ndarray:
     return _core.maximum(arr).reshape(trailing)
 
 
-def variance(arr: np.ndarray, *, ddof: int = 0, validate: bool = True) -> np.ndarray:
-    """Return the NaN-aware variance along the stack axis."""
+def variance(
+    arr: np.ndarray,
+    *,
+    ddof: int = 0,
+    return_mean: bool = False,
+    validate: bool = True,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+    """Return the NaN-aware variance along the stack axis.
+
+    If `return_mean` is `True`, return ``(variance, mean)`` from one Rust
+    accumulation pass.
+    """
     trailing = arr.shape[1:]
     if validate:
         arr = validate_stack(arr)
-    return _core.variance(arr, ddof=int(ddof)).reshape(trailing)
+    result = _core.variance(arr, ddof=int(ddof), return_mean=bool(return_mean))
+    if return_mean:
+        var, mean = result
+        return var.reshape(trailing), mean.reshape(trailing)
+    return result.reshape(trailing)
 
 
 def weighted_average(
@@ -441,12 +455,24 @@ def max_1d(values: np.ndarray, *, validate: bool = True) -> object:
     return _core.max_1d(values)
 
 
-def var_1d(values: np.ndarray, *, ddof: int = 0, validate: bool = True) -> object:
-    """Return the NaN-aware variance of a 1-D value vector."""
+def var_1d(
+    values: np.ndarray,
+    *,
+    ddof: int = 0,
+    return_mean: bool = False,
+    validate: bool = True,
+) -> object:
+    """Return the NaN-aware variance of a 1-D value vector.
+
+    If `return_mean` is `True`, return ``(variance, mean)`` from one Rust
+    accumulation pass.
+    """
     if not validate:
-        return _core.variance_1d(values, ddof=int(ddof))
+        return _core.variance_1d(
+            values, ddof=int(ddof), return_mean=bool(return_mean)
+        )
     values = _prepare_1d_values(values, validate=validate)
-    return _core.variance_1d(values, ddof=int(ddof))
+    return _core.variance_1d(values, ddof=int(ddof), return_mean=bool(return_mean))
 
 
 def wvg_1d(values: np.ndarray, weights: np.ndarray, *, validate: bool = True) -> object:

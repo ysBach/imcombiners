@@ -247,7 +247,7 @@ near-saturated pixels before they influence normalization or rejection.
 ### variance { #imcombiners.Combiner.variance }
 
 ```python
-Combiner.variance(ddof=1)
+Combiner.variance(ddof=1, return_mean=False)
 ```
 
 Return variance of final valid values along axis 0.
@@ -264,11 +264,19 @@ rejected by previous :meth:`reject` calls. This is equivalent to::
 
 :   Delta degrees of freedom. Pixels with ``nvalid <= ddof`` return `NaN`. Default is ``1``, i.e., Sample variance. Use ``ddof=0`` for population variance.
 
+<code>[**return_mean**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [False]{.parameter-default}</code>
+
+:   If `True`, also return the per-pixel mean computed from the same final valid values and the same Rust accumulation pass.
+
 #### Returns {.doc-section .doc-section-returns}
 
 <code>[**variance**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
 
 :   Per-pixel variance. Use ``np.sqrt(var)`` if an error or standard-deviation map is needed.
+
+<code>[**mean**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
+
+:   Returned only when `return_mean=True`.
 
 ### zero_scale { #imcombiners.Combiner.zero_scale }
 

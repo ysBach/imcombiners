@@ -37,6 +37,26 @@ def test_1d_combine_functions_match_numpy(name, reference):
     assert np.isscalar(out)
 
 
+def test_var_1d_can_return_mean_from_same_pass():
+    values = np.array([1.0, 2.0, np.nan, 5.0], dtype=np.float32)
+
+    var, mean = imck.var_1d(values, ddof=1, return_mean=True)
+
+    np.testing.assert_allclose(var, np.nanvar(values, ddof=1), rtol=1e-6)
+    np.testing.assert_allclose(mean, np.nanmean(values), rtol=1e-6)
+    assert np.isscalar(var)
+    assert np.isscalar(mean)
+
+
+def test_var_1d_return_mean_keeps_mean_when_variance_is_undefined():
+    values = np.array([1.0, np.nan], dtype=np.float32)
+
+    var, mean = imck.var_1d(values, ddof=1, return_mean=True)
+
+    assert np.isnan(var)
+    np.testing.assert_allclose(mean, 1.0)
+
+
 def test_lmedian_1d_returns_lower_middle_and_preserves_integer_dtype():
     values = np.array([4, 1, 3, 2], dtype=np.uint16)
 

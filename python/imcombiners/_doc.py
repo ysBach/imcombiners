@@ -148,10 +148,15 @@ _COMBINE_SPECS = {
         "ddof : int, optional\n"
         "    Delta degrees of freedom. The returned value is "
         "``sum((valid - mean)**2) / (nvalid - ddof)``. Pixels with "
-        "``nvalid <= ddof`` return `NaN`.",
+        "``nvalid <= ddof`` return `NaN`.\n"
+        "return_mean : bool, optional\n"
+        "    If `True`, also return the per-pixel mean from the same "
+        "accumulation pass.",
         "variance : ndarray, shape (*spatial)\n"
         "    Per-pixel variance of finite values. Use ``np.sqrt(var)`` if a "
-        "standard-deviation or error-like map is needed.",
+        "standard-deviation or error-like map is needed.\n"
+        "mean : ndarray, shape (*spatial)\n"
+        "    Returned only when `return_mean=True`.",
         "",
     ),
     "weighted_average": (

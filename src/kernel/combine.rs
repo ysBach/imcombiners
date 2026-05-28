@@ -230,7 +230,13 @@ fn weighted_average_strided<T: Float>(
 }
 
 #[inline]
-fn nanvariance_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize, ddof: usize) -> T {
+fn nanvariance_mean_strided<T: Float>(
+    data: &[T],
+    pixel: usize,
+    n: usize,
+    hw: usize,
+    ddof: usize,
+) -> (T, T) {
     let mut sums = [0.0_f64; 4];
     let mut sumsqs = [0.0_f64; 4];
     let mut counts = [0usize; 4];
@@ -282,12 +288,23 @@ fn nanvariance_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize, 
     let sum = sums.iter().sum::<f64>();
     let sumsq = sumsqs.iter().sum::<f64>();
     let count = counts.iter().sum::<usize>();
-    if count <= ddof {
-        return T::nan();
+    if count == 0 {
+        return (T::nan(), T::nan());
     }
     let mean = sum / count as f64;
+    if count <= ddof {
+        return (T::nan(), T::from_f64(mean));
+    }
     let numerator = (sumsq - sum * mean).max(0.0);
-    T::from_f64(numerator / (count - ddof) as f64)
+    (
+        T::from_f64(numerator / (count - ddof) as f64),
+        T::from_f64(mean),
+    )
+}
+
+#[inline]
+fn nanvariance_strided<T: Float>(data: &[T], pixel: usize, n: usize, hw: usize, ddof: usize) -> T {
+    nanvariance_mean_strided(data, pixel, n, hw, ddof).0
 }
 
 /// Extract finite values into `buf`, returns the finite count.
@@ -434,6 +451,40 @@ pub fn combine_axis0<T: Float>(
     }
 
     out
+}
+
+/// Return `(variance, mean)` along axis 0, sharing the variance accumulation pass.
+pub fn variance_mean_axis0<T: Float>(arr: &ArrayView3<T>, ddof: usize) -> (Array2<T>, Array2<T>) {
+    let (n, h, w) = (arr.shape()[0], arr.shape()[1], arr.shape()[2]);
+    let hw = h * w;
+    let mut var = Array2::<T>::from_elem((h, w), T::nan());
+    let mut mean = Array2::<T>::from_elem((h, w), T::nan());
+    let var_slice = var.as_slice_mut().expect("variance output is contiguous");
+    let mean_slice = mean.as_slice_mut().expect("mean output is contiguous");
+    let data = arr
+        .as_slice_memory_order()
+        .expect("variance_mean kernel requires contiguous C-order arrays");
+
+    let compute_pixel = |pixel: usize, var_px: &mut T, mean_px: &mut T| {
+        let (v, m) = nanvariance_mean_strided(data, pixel, n, hw, ddof);
+        *var_px = v;
+        *mean_px = m;
+    };
+    if hw >= parallel_threshold() {
+        var_slice
+            .par_iter_mut()
+            .zip(mean_slice.par_iter_mut())
+            .enumerate()
+            .for_each(|(pixel, (var_px, mean_px))| compute_pixel(pixel, var_px, mean_px));
+    } else {
+        var_slice
+            .iter_mut()
+            .zip(mean_slice.iter_mut())
+            .enumerate()
+            .for_each(|(pixel, (var_px, mean_px))| compute_pixel(pixel, var_px, mean_px));
+    }
+
+    (var, mean)
 }
 
 pub fn lmedian_axis0_ord<T>(arr: &ArrayView3<T>) -> Array2<T>
@@ -589,7 +640,7 @@ pub fn max_1d<T: Float>(values: &[T]) -> T {
     nanmax_slice(values)
 }
 
-pub fn variance_1d<T: Float>(values: &[T], ddof: usize) -> T {
+pub fn variance_mean_1d<T: Float>(values: &[T], ddof: usize) -> (T, T) {
     let mut sums = [0.0_f64; 4];
     let mut sumsqs = [0.0_f64; 4];
     let mut counts = [0usize; 4];
@@ -635,12 +686,22 @@ pub fn variance_1d<T: Float>(values: &[T], ddof: usize) -> T {
     let sum = sums.iter().sum::<f64>();
     let sumsq = sumsqs.iter().sum::<f64>();
     let count = counts.iter().sum::<usize>();
-    if count <= ddof {
-        return T::nan();
+    if count == 0 {
+        return (T::nan(), T::nan());
     }
     let mean = sum / count as f64;
+    if count <= ddof {
+        return (T::nan(), T::from_f64(mean));
+    }
     let numerator = (sumsq - sum * mean).max(0.0);
-    T::from_f64(numerator / (count - ddof) as f64)
+    (
+        T::from_f64(numerator / (count - ddof) as f64),
+        T::from_f64(mean),
+    )
+}
+
+pub fn variance_1d<T: Float>(values: &[T], ddof: usize) -> T {
+    variance_mean_1d(values, ddof).0
 }
 
 pub fn median_1d<T: Float>(values: &[T]) -> T {
