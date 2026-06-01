@@ -15,24 +15,7 @@ website:
       - api/resolve_zero_scale.qmd
       section: 1 Pipeline API
     - contents:
-      - api/kernels.mean.qmd
-      - api/kernels.median.qmd
-      - api/kernels.lmedian.qmd
-      - api/kernels.summation.qmd
-      - api/kernels.minimum.qmd
-      - api/kernels.maximum.qmd
-      - api/kernels.variance.qmd
-      - api/kernels.percentiles.qmd
-      - api/kernels.weighted_average.qmd
-      - api/kernels.mean_1d.qmd
-      - api/kernels.median_1d.qmd
-      - api/kernels.lmedian_1d.qmd
-      - api/kernels.sum_1d.qmd
-      - api/kernels.min_1d.qmd
-      - api/kernels.max_1d.qmd
-      - api/kernels.var_1d.qmd
-      - api/kernels.percentiles_1d.qmd
-      - api/kernels.wvg_1d.qmd
+      - api/kernels.nanaverage.qmd
       - api/kernels.grow_mask.qmd
       - api/kernels.sigclip.qmd
       - api/kernels.sigclip_1d.qmd
@@ -64,13 +47,5 @@ website:
       - api/ndcombine.qmd
       - api/place_into_padded.qmd
       section: 3 Compatibility API
-    - contents:
-      - api/get_rayon_num_threads.qmd
-      - api/set_rayon_num_threads.qmd
-      - api/get_parallel_threshold.qmd
-      - api/set_parallel_threshold.qmd
-      - api/get_minmax_1d_parallel_threshold.qmd
-      - api/set_minmax_1d_parallel_threshold.qmd
-      section: 4 Parallel Controls
     id: api
   - id: dummy-sidebar

@@ -65,21 +65,21 @@ variants for each operation/dtype pair. This result is specifically for
 output-only `mean`/`median` combinations with `sigclip`, `ccdclip`, `pclip`,
 and `minmax` on the measured machine.
 
-`benchmark_iraf.py` prints a full Markdown report, including optional one-case
-rows, to stdout. Use `--output /tmp/imc-iraf-benchmark.md` for a local artifact;
-the source tree tracks only this curated summary. The detailed benchmark harness
-notes live in `benchmarks/IRAF/README.md`.
+`benchmark_iraf.py` prints a full Markdown report, including package versions
+and OS/kernel details, to stdout. Use `--output /tmp/imc-iraf-benchmark.md` for
+a local artifact; the source tree tracks only this curated summary. The
+detailed benchmark harness notes live in `benchmarks/IRAF/README.md`.
 
 ## 2. Benchmark Table
 
-Benchmark done on MBP 14" [2024, macOS 26.4.1, M4Pro(8P+4E/G20c/N16c/48G)]. See `benchmarks/benchmark_combine.py` for details.
+Benchmark done on MBP 14" [2024, macOS 26.4.1, M4Pro(8P+4E/G20c/N16c/48G)]. New runs of `benchmarks/benchmark_combine.py` print an environment table with Python, NumPy, bottleneck, and OS/kernel details before the timing tables.
 
 ::: {.callout-tip title="TL;DR"}
 `imc` (Standard Combiner, `diagnostics=None`) is usually faster than the Astropy/NumPy and ccdproc comparison paths. The strongest rows are the frequently used **median** and **sigma-clipped median** combinations, especially for **float32** images.
 
-`imc` is the safe public Standard Combiner route. `imc_chain` is the Chained Combiner route that keeps rejection diagnostics. `imc_opt` is the prepared direct kernel calls path (`import imcombiners.kernels as imck`) with validation disabled and fused kernels where available.
+`imc` is the safe public Standard Combiner route. `imc_chain` is the Chained Combiner route that keeps rejection diagnostics. `imc_opt` is the prepared direct path with validation disabled: simple generic mean/median rows use `reducers`, while rejection rows use fused `imcombiners.kernels` calls where available.
 
-`imc_opt` is much faster than Chained Combiner and usually faster than Standard Combiner because it skips object construction, validation, and default workspace copies. When `imc_opt` only near-ties Standard Combiner, that is expected: both paths are calling the same fused Rust kernel, so only Python wrapper/preparation overhead remains.
+`imc_opt` is much faster than Chained Combiner and usually faster than Standard Combiner because it skips object construction, validation, and default workspace copies. When `imc_opt` only near-ties Standard Combiner on rejection rows, that is expected: both paths are calling the same fused Rust kernel, so only Python wrapper/preparation overhead remains.
 :::
 
 Columns:
@@ -88,13 +88,13 @@ Columns:
 |---|---|
 | **imc** | Standard Combiner on the original input dtype, ms. For supported single-rejector mean/median sigclip rows with `diagnostics=None`, this dispatches through the fused kernel. |
 | **imc_chain** | Chained Combiner path, ms. For rejection rows this retains diagnostics and pipeline state, so it intentionally does more work than fast output-only routes. For simple rows it is the same basic `cmb.combine(...)` shape without rejection diagnostics. |
-| **imc_opt** | direct kernel calls on a prepared contiguous float workspace with `validate=False`, ms. For sigclip rows this calls the fused `imck.sigclip_combine(...)` kernel and passes `mask=` directly. For simple masked mean/median rows the benchmark still materializes NaNs because the plain mean/median kernels do not accept `mask=`. |
+| **imc_opt** | optimized direct path on a prepared contiguous float workspace with `validate=False`, ms. For simple mean/median rows this uses the optimized imcombiners stack dispatcher. For sigclip rows this calls the fused `imck.sigclip_combine(...)` kernel and passes `mask=` directly. |
 | **ap_bn** | NumPy `nanmean`/`nanmedian` for simple rows; Astropy `sigma_clip` plus NumPy `nan*` reduction for sigclip rows, ms |
 | **ccdproc** | `ccdproc.Combiner`, ms |
-| **imc/opt** | imc ÷ imc_opt - values above 1.0 mean direct kernel calls are faster than Standard Combiner |
-| **chain/opt** | imc_chain ÷ imc_opt - Chained Combiner cost relative to direct kernel calls |
-| **ap/opt** | ap_bn ÷ imc_opt - Astropy/NumPy comparison path vs direct kernel calls |
-| **ccd/opt** | ccdproc ÷ imc_opt - ccdproc vs direct kernel calls |
+| **imc/opt** | imc ÷ imc_opt - values above 1.0 mean the optimized direct path is faster than Standard Combiner |
+| **chain/opt** | imc_chain ÷ imc_opt - Chained Combiner cost relative to the optimized direct path |
+| **ap/opt** | ap_bn ÷ imc_opt - Astropy/NumPy comparison path vs the optimized direct path |
+| **ccd/opt** | ccdproc ÷ imc_opt - ccdproc vs the optimized direct path |
 
 The benchmark validates `imc`, `imc_chain`, and `imc_opt` against the Astropy/NumPy reference before timing. ccdproc differences are informational only and are marked † when they exceed the tolerance; for sigclip rows, the script intentionally leaves `ccdproc.Combiner.sigma_clipping()` at its public default iteration behavior while the reference and imcombiners paths use `maxiters=5`.
 
@@ -104,7 +104,6 @@ scratch-reuse and variance-domain sigma-clipping updates:
 ```bash
 uv run --extra bench python benchmarks/benchmark_combine.py
 ```
-
 
 ## 3. No Mask
 

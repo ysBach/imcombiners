@@ -1,9 +1,22 @@
 [package]
 name = "imcombiners"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Rust-backed image stack combine + rejection kernels (IRAF imcombine parity)"
 license = "MIT"
+readme = "README.md"
+repository = "https://github.com/ysbach/imcombiners"
+homepage = "https://github.com/ysbach/imcombiners"
+documentation = "https://docs.rs/imcombiners"
+keywords = ["astronomy", "image-processing", "numpy", "pyo3"]
+categories = ["science", "algorithms"]
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/LICENSE",
+    "/README.md",
+    "/src/**/*.rs",
+]
 
 [lib]
 name = "_core"
@@ -17,7 +30,7 @@ pyo3 = { version = "0.28", features = ["abi3-py310"] }
 numpy = "0.28"
 ndarray = { version = "0.16", features = ["rayon"] }
 rayon = "1.10"
-reducers = { path = "../reducers", version = "0.3", default-features = false }
+reducers = { version = "0.3", default-features = false }
 
 [profile.release]
 opt-level = 3

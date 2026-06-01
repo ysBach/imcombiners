@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "imcombiners"
-version = "0.1.0"
+version = "0.1.1"
 description = "Rust-backed image stack combine + rejection kernels (IRAF imcombine parity)"
 readme = "README.md"
 license = { text = "MIT" }

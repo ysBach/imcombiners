@@ -73,7 +73,7 @@ Accepted public input dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`,
 | `mclip=yes` / `mclip=no` | `cenfunc="median"` / `cenfunc="mean"` | `SigClip(cenfunc=...)` or `CcdClip(cenfunc=...)`; `cenfunc="lmedian"`/`"lmed"` is also available when lower-median centering is wanted |
 | `niterate=n` | `maxiters=n` | `SigClip(maxiters=n)` or `CcdClip(maxiters=n)` |
 | `grow=r` | `grow=r` | `.reject(SigClip(...), grow=r)` or `SigClip(..., grow=r)` |
-| `weight=w`, `combine="average"` | `weight=w, combine="weighted_average"` | `.combine("weighted_average", weight=w)` |
+| `weight=w`, `combine="average"` | `weight=w, combine="mean"` | `.combine("mean", weight=w)` |
 | `rejmasks`, `nrejmasks`, `expmasks`, `sigmas` diagnostic products | `diagnostics="simple"` | returns `(combined, mask_rej, mask_thresh, std, low, upp, nit, output_flags)`, not IRAF-format files |
 | `blank=value` | pass `mask=(data == value)` | `Combiner(data, mask=(data == value))` |
 | `offsets=...` | prepare an offset-padded stack first | see the offset stacking tutorial, then combine the padded stack |
@@ -244,9 +244,15 @@ mask_low, *_ = imck.sigclip(
     nkeep=1,
     revert_on_nkeep=True,
 )
-arr_eff = stack.copy()
-arr_eff[mask_low] = np.nan
-out_low = imck.median(arr_eff)
+out_low = imck.sigclip_combine(
+    stack,
+    combine="median",
+    sigma=(3.0, 3.0),
+    maxiters=5,
+    cenfunc="median",
+    nkeep=1,
+    revert_on_nkeep=True,
+)
 
 np.testing.assert_allclose(out, out_low)
 print("direct kernel calls reproduce the IRAF-style median.")

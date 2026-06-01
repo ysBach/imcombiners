@@ -1,7 +1,0 @@
-# kernels.max_1d { #imcombiners.kernels.max_1d }
-
-```python
-kernels.max_1d(values, *, validate=True)
-```
-
-Return the NaN-aware maximum of a 1-D value vector.

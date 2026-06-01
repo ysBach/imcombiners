@@ -6,7 +6,7 @@
 </p>
 
 
-`imcombiners` was built for astronomical image-stack combination, but the core kernels are general-purpose reductions for stack combination, 1-D statistics, and pixel/value rejection.
+`imcombiners` was built for astronomical image-stack combination. Generic reductions now live in the companion `reducers` package; imcombiners focuses on stack combination plus imcombine-style rejection. Pure stack reductions use `reducers` with imcombiners' finite-only policy: both `NaN` and `inf` are skipped.
 
 Documentation: https://ysbach.github.io/imcombiners/
 GitHub: https://github.com/ysBach/imcombiners
@@ -52,11 +52,11 @@ See [docs/quarto/index.qmd](docs/quarto/index.qmd#first-look) for the detailed e
 
 ## Features
 
-- Stack combination: mean, median, lower median, percentiles, sum, min, max, variance, and weighted average.
-- 1-D utilities: `imcombiners.kernels` exposes `_1d` functions such as `median_1d`, `percentiles_1d`, `var_1d`, `wvg_1d`, `sigclip_mask_1d`, and `minmax_combine_1d` for generic vectors, flattened images, light curves, and detector samples.
+- Stack combination: mean, median, lower median, percentiles, sum, min, max, variance, and weighted mean via `weight=`.
+- 1-D rejection helpers: `imcombiners.kernels` exposes `_1d` functions such as `sigclip_mask_1d`, `pclip_1d`, and `minmax_combine_1d`. Use the companion `reducers` package for standalone fast reductions such as mean, median, percentile, and variance.
 - Pixel rejection: sigma, CCD noise-model, iterative linear, min/max, and IRAF-style percentile clipping. Rejection centers accept mean, median, and lower median (`lmedian`/`lmed`).
 - Pipeline helpers: threshold masking, zero/scale normalization, offset padding, masks, `diagnostics=None|"simple"|"full"`, and output-only fast paths.
-- Performance docs: see [docs/quarto/performance/max-performance.qmd](docs/quarto/performance/max-performance.qmd), [docs/quarto/performance/image-benchmarks.qmd](docs/quarto/performance/image-benchmarks.qmd), and [docs/quarto/performance/array-1d-benchmarks.qmd](docs/quarto/performance/array-1d-benchmarks.qmd).
+- Performance docs: see [docs/quarto/performance/max-performance.qmd](docs/quarto/performance/max-performance.qmd) and [docs/quarto/performance/image-benchmarks.qmd](docs/quarto/performance/image-benchmarks.qmd).
 
 ## Development Install
 
@@ -71,7 +71,6 @@ uv pip install -e ".[dev]"
 ```bash
 uv run pytest
 uv run --extra bench python benchmarks/benchmark_combine.py
-uv run --extra bench python benchmarks/benchmark_1d.py
 uv run python benchmarks/benchmark_threads.py
 ```
 

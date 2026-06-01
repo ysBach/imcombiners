@@ -204,9 +204,14 @@ Direct kernel calls are advanced primitives for those who want to spend manual w
     ddof=0,
 )
 
-arr_eff = stack.copy()
-arr_eff[input_mask | mask_direct] = np.nan
-out_kernel = imck.median(arr_eff)
+out_kernel = imck.sigclip_combine(
+    stack,
+    mask=input_mask,
+    combine="median",
+    sigma=(3.0, 3.0),
+    maxiters=5,
+    ddof=0,
+)
 
 np.testing.assert_allclose(out_default, out_kernel)
 print(f"direct kernel calls: mask={mask_direct.shape}, output_flags={output_flags_direct.dtype}")

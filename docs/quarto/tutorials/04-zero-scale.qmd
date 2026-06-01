@@ -19,7 +19,6 @@ Advanced callers can inspect the resolved broadcast vector with
 ```{python}
 import numpy as np
 import imcombiners as imc
-import imcombiners.kernels as imck
 ```
 
 ## 1. Synthetic Setup
@@ -181,14 +180,14 @@ print(f"zero + scale + sigclip median: mean={out_both.mean():.4f}")
 - `scale` must be non-zero everywhere — a zero value raises `ValueError`.
 - Use Chained Combiner (`cmb.zero_scale(...).reject(...).combine(...)`) when you want to inspect the normalized workspace before combining.
 
-## 8. Performance Tips: direct kernel calls
+## 8. Prepared Workspace Check
 
-For simple fixed normalization, direct kernel calls can reproduce the same result after you prepare the workspace yourself:
+For simple fixed normalization, a prepared workspace can reproduce the same result:
 
 ```{python}
 manual = np.ascontiguousarray(stack / illumination[:, None, None], dtype=np.float32)
-out_low = imck.median(manual, validate=False)
+out_low = imc.Combiner(manual, copy=False, validate=False).combine("median")
 
 np.testing.assert_allclose(out_num, out_low, rtol=1e-5)
-print("direct kernel calls match the numeric-scale result.")
+print("prepared workspace matches the numeric-scale result.")
 ```

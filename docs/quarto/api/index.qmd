@@ -23,24 +23,7 @@ Advanced one-operation primitives for custom pipeline layers.
 
 | | |
 | --- | --- |
-| [kernels.mean](kernels.mean.qmd#imcombiners.kernels.mean) | Return the NaN-aware mean along the stack axis. |
-| [kernels.median](kernels.median.qmd#imcombiners.kernels.median) | Return the NaN-aware median along the stack axis. |
-| [kernels.lmedian](kernels.lmedian.qmd#imcombiners.kernels.lmedian) | IRAF-style lower median along the stack axis. |
-| [kernels.summation](kernels.summation.qmd#imcombiners.kernels.summation) | Return the NaN-aware sum along the stack axis. |
-| [kernels.minimum](kernels.minimum.qmd#imcombiners.kernels.minimum) | Return the NaN-aware minimum along the stack axis. |
-| [kernels.maximum](kernels.maximum.qmd#imcombiners.kernels.maximum) | Return the NaN-aware maximum along the stack axis. |
-| [kernels.variance](kernels.variance.qmd#imcombiners.kernels.variance) | Return the NaN-aware variance along the stack axis. |
-| [kernels.percentiles](kernels.percentiles.qmd#imcombiners.kernels.percentiles) | Return NaN-aware percentiles along the stack axis. |
-| [kernels.weighted_average](kernels.weighted_average.qmd#imcombiners.kernels.weighted_average) | Return the NaN-aware weighted average along the stack axis. |
-| [kernels.mean_1d](kernels.mean_1d.qmd#imcombiners.kernels.mean_1d) | Return the NaN-aware mean of a 1-D value vector. |
-| [kernels.median_1d](kernels.median_1d.qmd#imcombiners.kernels.median_1d) | Return the NaN-aware median of a 1-D value vector. |
-| [kernels.lmedian_1d](kernels.lmedian_1d.qmd#imcombiners.kernels.lmedian_1d) | Return the NaN-aware lower median of a 1-D value vector. |
-| [kernels.sum_1d](kernels.sum_1d.qmd#imcombiners.kernels.sum_1d) | Return the NaN-aware sum of a 1-D value vector. |
-| [kernels.min_1d](kernels.min_1d.qmd#imcombiners.kernels.min_1d) | Return the NaN-aware minimum of a 1-D value vector. |
-| [kernels.max_1d](kernels.max_1d.qmd#imcombiners.kernels.max_1d) | Return the NaN-aware maximum of a 1-D value vector. |
-| [kernels.var_1d](kernels.var_1d.qmd#imcombiners.kernels.var_1d) | Return the NaN-aware variance of a 1-D value vector. |
-| [kernels.percentiles_1d](kernels.percentiles_1d.qmd#imcombiners.kernels.percentiles_1d) | Return NaN-aware percentiles of a 1-D value vector. |
-| [kernels.wvg_1d](kernels.wvg_1d.qmd#imcombiners.kernels.wvg_1d) | Return the NaN-aware weighted average of a 1-D value vector. |
+| [kernels.nanaverage](kernels.nanaverage.qmd#imcombiners.kernels.nanaverage) | Return the NaN-aware weighted average along the stack axis. |
 | [kernels.grow_mask](kernels.grow_mask.qmd#imcombiners.kernels.grow_mask) | Dilate a stack mask over spatial axes by an exact Euclidean radius. |
 | [kernels.sigclip](kernels.sigclip.qmd#imcombiners.kernels.sigclip) | Sigma-clipping rejection. |
 | [kernels.sigclip_1d](kernels.sigclip_1d.qmd#imcombiners.kernels.sigclip_1d) | Sigma-clipping rejection for a 1-D value vector. |
@@ -76,16 +59,3 @@ IRAF-style compact wrapper.
 | --- | --- |
 | [ndcombine](ndcombine.qmd#imcombiners.ndcombine) | Combine an image stack with optional normalization and rejection. |
 | [place_into_padded](place_into_padded.qmd#imcombiners.place_into_padded) | Place N-D arrays into a padded stack using integer offsets. |
-
-## 4 Parallel Controls
-
-Runtime controls for Rayon worker count and serial/parallel cutoff.
-
-| | |
-| --- | --- |
-| [get_rayon_num_threads](get_rayon_num_threads.qmd#imcombiners.get_rayon_num_threads) | Return the size of Rayon global worker pool. |
-| [set_rayon_num_threads](set_rayon_num_threads.qmd#imcombiners.set_rayon_num_threads) | Set the Rayon global worker-pool size. |
-| [get_parallel_threshold](get_parallel_threshold.qmd#imcombiners.get_parallel_threshold) | Return the output-element threshold where kernels switch to Rayon. |
-| [set_parallel_threshold](set_parallel_threshold.qmd#imcombiners.set_parallel_threshold) | Set the output-element threshold where kernels switch to Rayon. |
-| [get_minmax_1d_parallel_threshold](get_minmax_1d_parallel_threshold.qmd#imcombiners.get_minmax_1d_parallel_threshold) | Return the vector length where 1-D min/max switch to Rayon. |
-| [set_minmax_1d_parallel_threshold](set_minmax_1d_parallel_threshold.qmd#imcombiners.set_minmax_1d_parallel_threshold) | Set the vector length where 1-D min/max switch to Rayon. |

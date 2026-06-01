@@ -18,7 +18,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import imcombiners as imc
-import imcombiners.kernels as imck
 ```
 
 ## 1. Make Stack
@@ -181,13 +180,13 @@ plt.show()
 
 The same sign convention applies in real data. If an object moves by `(+dx, +dy)` pixels between frames, pass offsets close to `(-dy, -dx)` so the object lands at the same padded-stack coordinate before combining.
 
-## 5. Performance Tips: direct kernel calls
+## 5. Prepared Workspace Check
 
-After `place_into_padded()` has prepared a floating stack, direct kernel calls can perform the final median directly:
+After `place_into_padded()` has prepared a floating stack, the same workspace can be passed through Combiner without another copy:
 
 ```{python}
-asteroid_low = imck.median(asteroid_stack, validate=False)
+asteroid_low = imc.Combiner(asteroid_stack, copy=False, validate=False).combine("median")
 
 np.testing.assert_allclose(asteroid_frame, asteroid_low)
-print("direct kernel calls match the Standard Combiner median.")
+print("prepared workspace matches the Standard Combiner median.")
 ```

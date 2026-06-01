@@ -33,15 +33,13 @@ website:
           - href: tutorials/07-iraf-compat.qmd
             text: "07 IRAF Compatibility"
           - href: tutorials/08-1d-arrays.qmd
-            text: "08 1-D Arrays"
+            text: "08 1-D Rejection"
       - text: Performance
         menu:
           - href: performance/max-performance.qmd
             text: "How To Get Maximum Performance"
           - href: performance/image-benchmarks.qmd
             text: "2-D Image Benchmarks"
-          - href: performance/array-1d-benchmarks.qmd
-            text: "1-D Array Benchmarks"
       - href: api/index.qmd
         text: API
 
@@ -85,24 +83,7 @@ quartodoc:
     - title: "2 Kernel API"
       desc: Advanced one-operation primitives for custom pipeline layers.
       contents:
-        - kernels.mean
-        - kernels.median
-        - kernels.lmedian
-        - kernels.summation
-        - kernels.minimum
-        - kernels.maximum
-        - kernels.variance
-        - kernels.percentiles
-        - kernels.weighted_average
-        - kernels.mean_1d
-        - kernels.median_1d
-        - kernels.lmedian_1d
-        - kernels.sum_1d
-        - kernels.min_1d
-        - kernels.max_1d
-        - kernels.var_1d
-        - kernels.percentiles_1d
-        - kernels.wvg_1d
+        - kernels.nanaverage
         - kernels.grow_mask
         - kernels.sigclip
         - kernels.sigclip_1d
@@ -134,15 +115,6 @@ quartodoc:
       contents:
         - ndcombine
         - place_into_padded
-    - title: "4 Parallel Controls"
-      desc: Runtime controls for Rayon worker count and serial/parallel cutoff.
-      contents:
-        - get_rayon_num_threads
-        - set_rayon_num_threads
-        - get_parallel_threshold
-        - set_parallel_threshold
-        - get_minmax_1d_parallel_threshold
-        - set_minmax_1d_parallel_threshold
   renderer:
     style: markdown
     display_name: short

@@ -95,18 +95,18 @@ Chained Combiner style; it preserves masks and rejection diagnostics for
 inspection.
 Since ``Combiner`` works on its normalized workspace, ``lmedian`` here
 follows that workspace dtype. Integer-preserving pure lower median is
-available through :func:`imcombiners.kernels.lmedian` or pure
+available through ``combine="lmedian"`` or pure
 :func:`imcombiners.ndcombine` calls.
 
 #### Parameters {.doc-section .doc-section-parameters}
 
 <code>[**method**]{.parameter-name} [:]{.parameter-annotation-sep} [str]{.parameter-annotation} [ = ]{.parameter-default-sep} [\'mean\']{.parameter-default}</code>
 
-:   Combine method. Supported aliases are `"mean"`, `"average"`, `"avg"`, `"median"`, `"med"`, `"lmedian"`, `"lmed"`, `"sum"`, `"min"`, `"max"`, `"variance"`, `"var"`, `"weighted_average"` and `"wvg"`.
+:   Combine method. Supported aliases are `"mean"`, `"average"`, `"avg"`, `"median"`, `"med"`, `"lmedian"`, `"lmed"`, `"sum"`, `"min"`, `"max"`, `"variance"` and `"var"`.
 
 <code>[**weight**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of shape (N,)]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
 
-:   Required for ``method="weighted_average"``.
+:   Optional weights for ``method="mean"`` / ``"average"`` / ``"avg"``.
 
 <code>[**ddof**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [0]{.parameter-default}</code>
 
@@ -266,7 +266,7 @@ rejected by previous :meth:`reject` calls. This is equivalent to::
 
 <code>[**return_mean**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [False]{.parameter-default}</code>
 
-:   If `True`, also return the per-pixel mean computed from the same final valid values and the same Rust accumulation pass.
+:   If `True`, also return the per-pixel mean computed from the same final valid values.
 
 #### Returns {.doc-section .doc-section-returns}
 

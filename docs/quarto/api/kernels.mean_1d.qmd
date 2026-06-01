@@ -1,7 +1,0 @@
-# kernels.mean_1d { #imcombiners.kernels.mean_1d }
-
-```python
-kernels.mean_1d(values, *, validate=True)
-```
-
-Return the NaN-aware mean of a 1-D value vector.

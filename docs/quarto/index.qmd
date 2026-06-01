@@ -65,7 +65,7 @@ Use the public API at the level that matches your workflow:
 | **Standard Combiner** | You want the final image, optional zero/scale/rejection, and a `cmb` object you can still inspect. |
 | **compact ndcombine() wrapper** | You want a compact function call, especially for IRAF-style or CLI-facing code. |
 | **Chained Combiner** | You need retained masks, clipping bounds, iteration counts, or step-by-step diagnostics. |
-| **direct kernel calls** | You have already prepared arrays and want focused primitives such as `imck.sigclip_combine(...)` or `imck.median(...)`. |
+| **direct kernel calls** | You have already prepared arrays and want focused imcombine primitives such as `imck.sigclip_combine(...)` or `imck.nanaverage(...)`. |
 
 All four modes share the same Rust core. Standard Combiner is the main
 recommended path in these tutorials. Chained Combiner does more work because it
@@ -74,11 +74,11 @@ copying, diagnostics, and object construction they can safely skip.
 
 A convenience function `place_into_padded(images, offsets)` is also available for integer-pixel offset placement before combining. It accepts arrays with any shared number of trailing dimensions. Offsets are in NumPy axis order (`(dy, dx)` for 2-D images), and uncovered pixels are filled with `NaN` by default.
 
-One dtype detail differs by mode: direct kernel calls via `imck.lmedian(int_stack)` and pure compact ndcombine() wrapper with `combine="lmedian"` preserve accepted integer dtypes, while Combiner workflows with masking, rejection, zero, scale, or weights use the normal floating workspace.
+One dtype detail differs by mode: pure compact `ndcombine()` calls with `combine="lmedian"` preserve accepted integer dtypes, while Combiner workflows with masking, rejection, zero, scale, or weights use the normal floating workspace.
 
 ## 2. Features
 
-- Combine methods: mean, median, lower median (`lmed`), percentiles, sum, min, max, variance, and weighted average (`wvg`).
+- Combine methods: mean, median, lower median (`lmed`), percentiles, sum, min, max, variance, and weighted mean via `weight=` on mean/average.
 - Rejection methods: sigma clipping, CCD-noise clipping, iterative center-relative linear clipping, min/max clipping, and IRAF-style `pclip`.
 - Optional threshold masking, zero/scale normalization, and integer-pixel offset padding are available for common image-stack workflows.
 - Iterative sigma/CCD/linear clipping, `nkeep` rollback, min/max counts, and scalar `pclip` rank-offset behavior follow the supported IRAF compatibility model.
@@ -101,17 +101,17 @@ Iterative sigma, CCD, and linear clipping recompute the clipping center from the
 
 * Stacks are `(N, *spatial)`. Combination and rejection always run along the **stack axis** (axis 0) and return `(*spatial)`.
 * Terminology: the **stack axis** is axis 0 (`N`). An **output element** is one location in `(*spatial)`, such as one image pixel. Diagnostics shaped `(N, *spatial)` are per-sample; diagnostics shaped `(*spatial)` are per-output-element. Documentation avoids using "column" for axis-0 stacks because CCD images already use row/column for spatial axes.
-* Accepted public input dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. `uint8`, `uint16`, and `int16` promote to `float32`; `int32` promotes to `float64`; `float32` and `float64` are preserved. Other dtypes are not silently cast. In particular, `int64` cannot be combined with full integer precision because there is no `float128` combiner; users must explicitly cast unsupported dtypes to a chosen supported dtype before calling `imcombiners`.
-* `NaN` and `inf` values are treated as masked by combine kernels. Public mask/rejection paths handle masks for you; if you bypass the high-level API, pre-fill rejected samples with `NaN` before combining.
+* Accepted public input dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Pure stack reductions delegate to `reducers`: computed integer statistics such as `mean`, `median`, `sum`, and `variance` follow `reducers`/NumPy-style promotion to `float64`, while exact selectors such as `min`, `max`, and `lmedian` preserve integer dtype. Masking, rejection, zero/scale, and fused-kernel workflows still use imcombiners' floating workspace (`uint8`, `uint16`, and `int16` to `float32`; `int32` to `float64`). Other dtypes are not silently cast.
+* `NaN` and `inf` values are treated as masked by imcombiners stack reductions. This intentionally differs from NumPy and the default `reducers.nan*` behavior for `inf`; use `ignore_inf=True` with `reducers` to match imcombiners.
 * A **kernel** is a function in `import imcombiners.kernels as imck` that directly uses Rust to compute a result from input arrays.
-* Variance is available as `Combiner(...).variance(ddof=...)`, `imck.variance(...)`, or the aliases `combine="variance"` / `"var"`. It is computed from final valid values: `np.nanvar(arr_eff, axis=0, ddof=ddof)`. Use `np.sqrt(var)` if an error or standard-deviation map is needed.
+* Variance is available as `Combiner(...).variance(ddof=...)` or the aliases `combine="variance"` / `"var"`. It is computed from final valid values: `np.nanvar(arr_eff, axis=0, ddof=ddof)`. Use `np.sqrt(var)` if an error or standard-deviation map is needed.
 * Rejection kernels return a 6-tuple `(mask_rej, std, low, upp, nit, output_flags)` where `std` is the per-pixel spread used by sigma/CCD clipping (`None` for algorithms without a spread diagnostic). `output_flags=0` means normal completion and nonzero status bits are a bit-OR of `1=pre-masked input`, `2=maxiters hit`, `4=nkeep hit`, `8=maxrej hit`, and `16=grow added rejected samples`.
 * High-level diagnostics are controlled with `diagnostics`: `None` returns only the combined image, `"simple"` returns the current per-output-element diagnostics, and `"full"` appends a stack-shaped `uint8` `sample_flags` array. `sample_flags` uses a separate bit namespace: `1=input mask/BPM`, `2=non-finite`, `4=threshold mask`, `8=final algorithm rejection`, `16=added by grow`, and `32=already masked before this rejection step`.
 * Spatial offsets use `(dy, dx)` in Python/NumPy order. Photometric zero offsets use the `zero=` correction in combine APIs; keep these concepts separate when porting FITS/WCS workflows.
 
 ## 5. Memory
 
-The current implementation works on full arrays. For a `float32` input stack with size `X = stack.nbytes`, pure combine methods need little extra memory beyond the output. Rejection workflows typically need a boolean rejection mask and a NaN-filled working copy, so plan for roughly `2.5X` total memory. Zero/scale plus rejection can require about `3X` total, and integer inputs are first promoted to a floating workspace. Spatial chunking is planned for memory-constrained large stacks.
+The current implementation works on full arrays. For a `float32` input stack with size `X = stack.nbytes`, pure combine methods need little extra memory beyond the output. Rejection workflows typically need a boolean rejection mask and a NaN-filled working copy, so plan for roughly `2.5X` total memory. Zero/scale plus rejection can require about `3X` total, and integer inputs entering those workflows are first promoted to a floating workspace. Spatial chunking is planned for memory-constrained large stacks.
 
 ## 6. Performance
 
@@ -127,4 +127,4 @@ The detailed performance model lives in [How To Get Maximum Performance](perform
 - [Scope Of The Fastest Paths](performance/max-performance.qmd#scope-of-the-fastest-paths) explains when Standard Combiner, `ndcombine()`, Chained Combiner, and direct kernel calls differ in requested work.
 - [Workspace Requirements](performance/max-performance.qmd#workspace-requirements), [Why The Stack Axis Is First](performance/max-performance.qmd#why-the-stack-axis-is-first), and [Thread Tuning](performance/max-performance.qmd#thread-tuning) cover layout and tuning.
 
-Recorded local benchmark tables are split into [2-D Image Benchmarks](performance/image-benchmarks.qmd) and [1-D Array Benchmarks](performance/array-1d-benchmarks.qmd).
+Recorded local imcombiners benchmark tables are in [2-D Image Benchmarks](performance/image-benchmarks.qmd). Generic 1-D reduction benchmarks now belong to the companion `reducers` package.

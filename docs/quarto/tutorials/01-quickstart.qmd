@@ -131,10 +131,12 @@ Direct kernel calls are useful when arrays are already prepared and you want a f
 ```{python}
 import imcombiners.kernels as imck
 
-mask_direct, *_ = imck.sigclip(stack, sigma=(3.0, 3.0), maxiters=5)
-arr_eff = stack.copy()
-arr_eff[mask_direct] = np.nan
-out_direct = imck.median(arr_eff)
+out_direct = imck.sigclip_combine(
+    stack,
+    combine="median",
+    sigma=(3.0, 3.0),
+    maxiters=5,
+)
 
 np.testing.assert_allclose(out_direct, out_chain)
 print("direct kernel calls match the Chained Combiner result.")

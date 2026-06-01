@@ -387,7 +387,7 @@ Use `return_mean=True` when you need both variance and mean from the same final 
 
 For completeness: `median` averages the two middle values for even N (standard), while `lmedian` takes the lower of the two (IRAF convention). The same `lmedian`/`lmed` names can be used as rejection centers through `cenfunc` and `clip_cen`; that affects threshold calculation, while `combine="lmedian"` affects the final stack reduction.
 
-Because `lmedian` selects one input sample rather than averaging two samples, pure integer lower-median calls preserve accepted integer dtype. This applies to direct kernel calls via `imck.lmedian(int_stack)` and to compact ndcombine() wrapper with `combine="lmedian"` or `combine="lmed"` when no mask, rejection, zero, scale, or weight is used. This is often useful for even-numbered `uint16` image stacks: standard median may need a `.5` value and therefore a floating output, while lower median can stay `uint16` and save storage. Masked, rejected, zero-scaled, and `Combiner` workflows use the normal floating workspace.
+Because `lmedian` selects one input sample rather than averaging two samples, pure integer lower-median calls preserve accepted integer dtype. This applies to compact `ndcombine()` calls with `combine="lmedian"` or `combine="lmed"` when no mask, rejection, zero, scale, or weight is used. This is often useful for even-numbered `uint16` image stacks: standard median may need a `.5` value and therefore a floating output, while lower median can stay `uint16` and save storage. Masked, rejected, zero-scaled, and `Combiner` workflows use the normal floating workspace.
 
 ```{python}
 even_stack = stack[:10]   # N=10 (even)
@@ -412,7 +412,7 @@ The combine string names and aliases are the same in `Combiner` and `ndcombine`:
 | `min` | |
 | `max` | |
 | `variance` | `var` |
-| `weighted_average` | `wvg` |
+| weighted mean | use `combine="mean", weight=w` |
 
 ## 11. Performance Tips: direct kernel calls
 
@@ -423,9 +423,13 @@ mask_direct, std_direct, low_direct, upp_direct, nit_direct, code_direct = imck.
     stack, sigma=(3.0, 3.0), maxiters=5, cenfunc="median"
 )
 
-arr_eff = stack.copy()
-arr_eff[mask_direct] = np.nan
-out_direct = imck.median(arr_eff)
+out_direct = imck.sigclip_combine(
+    stack,
+    combine="median",
+    sigma=(3.0, 3.0),
+    maxiters=5,
+    cenfunc="median",
+)
 
 np.testing.assert_allclose(out_direct, out_sc)
 print("direct kernel calls match the Chained Combiner result.")

@@ -1,7 +1,0 @@
-# kernels.min_1d { #imcombiners.kernels.min_1d }
-
-```python
-kernels.min_1d(values, *, validate=True)
-```
-
-Return the NaN-aware minimum of a 1-D value vector.

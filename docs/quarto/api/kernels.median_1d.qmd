@@ -1,7 +1,0 @@
-# kernels.median_1d { #imcombiners.kernels.median_1d }
-
-```python
-kernels.median_1d(values, *, validate=True)
-```
-
-Return the NaN-aware median of a 1-D value vector.

@@ -6,8 +6,8 @@ This page collects the performance model, implementation notes, thread tuning,
 and optimized-workspace guidance for `imcombiners`. Exact timings vary with
 shape, dtype, rejection density, stack depth, memory layout, CPU, and thread
 settings, so treat printed numbers as local measurements rather than universal
-constants. See [2-D Image Benchmarks](image-benchmarks.qmd) and
-[1-D Array Benchmarks](array-1d-benchmarks.qmd) for recorded benchmark tables.
+constants. See [2-D Image Benchmarks](image-benchmarks.qmd) for recorded
+imcombiners benchmark tables.
 
 ## 1. Implementation Tricks
 
@@ -16,16 +16,17 @@ and memory traffic matter. The following implementation choices are intended to
 change runtime and memory traffic, not mathematical results. Here, "vector" is a Rust term for a contiguous 1-D array.
 
 - **Fuse output-only rejection and final reduction when it is exact.** IRAF avoids duplicate work when the rejection path already has the retained samples needed for the requested final value. `imc` applies that work-elimination principle through supported `mean`/`median` output-only Rust paths.
+- **Hybrid reducer ownership.** General-purpose reducers live in `reducers`; `imc` calls them for generic stack reductions where their axis kernels are competitive. `imc` keeps image-stack-specific median traversal and fused reject+combine loops when per-output scratch reuse, mask handling, or rejection state makes the generic reducer shape slower.
 - **Axis-first public layout.** `(N, *spatial)` matches the cheap `np.stack(images, axis=0)` construction path. Building a C-order `(H, W, N)` cube from separate images can cost a lot; see [Why The Stack Axis Is First](#why-the-stack-axis-is-first).
 - **Prepared float workspaces.** Public calls validate and promote dtypes at the boundary; hot loops can prepare a C-contiguous `float32`/`float64` workspace once and then use `validate=False` on already-checked data.
-- **Trusted 1-D direct calls.** The `_1d` reduction wrappers send `validate=False` calls directly into Rust instead of re-running Python array preparation. This path assumes the caller already supplied a contiguous `float32` or `float64` vector.
 - **Fused output-only kernels.** When `diagnostics=None`, mean/median rejection calls combine rejection and final reduction in one Rust pass. If it were not for this, the code should make a full rejection mask, copying a NaN-filled stack, and calling a second combine kernel.
-- **Selective median instead of full sort.** Median-style combine kernels compact finite values for one output pixel and select only the needed order statistic instead of sorting the whole per-pixel stack.
+- **Selective order statistics instead of full sort.** Median/percentile-style combine kernels compact finite values for one output pixel and select only the needed order statistic instead of sorting the whole per-pixel stack. `imc` owns the image-stack traversal and scratch reuse; `reducers` supplies the valid-buffer in-place selection primitives used after compaction.
+- **Fused variance/mean only when both are requested.** Plain variance uses reducers' axis scan directly. When `return_mean=True`, `imc` compacts each finite output stack into reused scratch and calls reducers' borrowed-slice `(variance, mean)` primitive so the mean is not computed by a second full axis reduction.
 - **Per-worker scratch reuse.** Each Rayon worker keeps reusable temporary buffers for one per-output stack: copied pixel values, boolean masks, sorted rank pairs, and statistic work arrays. As the worker moves from one output pixel to the next, those buffers are cleared and refilled instead of newly allocated.
 - **Scratch reuse in diagnostic rejection.** Full diagnostic `sigclip`, `minmax`, and `pclip` paths also reuse per-worker stack-axis buffer, mask, rank-pair, residual, and statistic buffers; only the final per-output mask/diagnostic payload is retained.
 - **Raw contiguous slice indexing.** After validation, the Rust kernels require C-contiguous NumPy arrays. They view the stack as one flat memory slice and compute offsets directly, avoiding repeated multidimensional ndarray indexing and shape/stride bookkeeping in inner loops.
 - **Unrolled reductions with separate accumulators.** Sum, mean, and variance scans process several stack samples per loop and keep separate running sums/counts before merging them at the end. This reduces loop overhead and short dependency chains in the CPU pipeline. For axis-0 image stacks, the Rust loop advances a flat slice index by `H * W` to read `arr[:, y, x]` without repeated multidimensional indexing.
-- **Branch-light min/max scans.** NaN-aware min/max reductions use the same numeric min/max semantics as the desired `nanmin`/`nanmax` behavior, so the inner loop does not need a separate branch just to ask whether the current output is still `NaN`. This is not "Rust is faster by default"; it is a specific way to avoid an unnecessary branch in a very small hot loop. Large contiguous 1-D min/max vectors also use Rayon chunk reductions.
+- **Branch-light min/max scans.** NaN-aware stack min/max reductions use the same numeric min/max semantics as the desired `nanmin`/`nanmax` behavior, so the inner loop does not need a separate branch just to ask whether the current output is still `NaN`. This is not "Rust is faster by default"; it is a specific way to avoid an unnecessary branch in a very small hot loop.
 - **CCD clip without a full gain copy.** `ccdclip`, `ccdclip_mask`, and output-only `ccdclip_combine` pass `gain` into Rust and evaluate rejection on gain-corrected per-pixel scratch values instead of first materializing a full `arr / gain` stack. Output-only `ccdclip` still combines the original source values.
 - **Mask-aware finite handling.** Non-finite samples are folded into masks once, so later inner loops can avoid redundant finite checks where correctness permits.
 - **Squared-spread sigma clipping.** `sigma` is the user-supplied dimensionless multiplier, not the measured data spread. The ordinary test is `abs(x - center) > sigma * std`, where `std` is the standard deviation for `stdfunc="std"`, the scaled MAD estimate for `stdfunc="mad"`, or the CCD noise sigma for `ccdclip`. The Rust loop *squares both sides* and tests `(x - center)^2 > sigma^2 * std^2`; for `stdfunc="std"`, `std^2` is variance. That lets output-only and mask-only paths avoid computing square roots (sqrt) on every iteration; the square root is only needed when returning diagnostic `std`.
@@ -50,21 +51,6 @@ From local test, I found the prepared axis-last Rust kernels were only slightly 
 
 * **NOTE**: `np.moveaxis(stack, 0, -1)` is cheap as a view, but it does not make the data contiguous in the axis-last order. A Rust kernel requiring contiguous `(H, W, N)` storage would still need a full copy such as `np.ascontiguousarray(np.moveaxis(stack, 0, -1))`.
 
-### Dependency probes
-
-Several Rust statistics crates (`ndarray-stats`, `argminmax`, `scirs2-stats`) were checked making kernels in this repo. A small benchmark on `(N, 384, 384)` `float32`stacks measured the median combine core and a simple min/max scan:
-
-| stack `N` | `imc`'s old median | `imc`'s new selective median | `ndarray-stats` median | `imc`'s scalar min/max scan | using `argminmax` |
-|---:|---:|---:|---:|---:|---:|
-| 31 | 39.1 ms | 19.0 ms | 98.2 ms | 5.21 ms | 8.82 ms |
-| 5 | 7.80 ms | 3.26 ms | 33.0 ms | 0.11 ms | 3.42 ms |
-
-These numbers are not a claim that the external crates are slow in general.
-
-* `ndarray-stats` uses a generic mutable axis-quantile path (plus version differences from `imc`);
-* `argminmax` is useful for contiguous vectors, but `imc` first has to gather each axis-0 pixel stack from strided `(N, H, W)` storage;
-* `scirs2-stats` has a broader SciPy-like dependency surface than `imc` needs.
-
 ## 2. API Choice
 
 The shortest rule is:
@@ -73,7 +59,7 @@ The shortest rule is:
 - Use Chained Combiner or `diagnostics="simple"/"full"` when you need `last_reject`, `mask_rej`, `low`, `upp`, `nit`, or `output_flags`, plus `sample_flags`.
 - Use direct kernel calls (`import imcombiners.kernels as imck`) only for trusted hot loops where the input layout is already guaranteed.
 
-Direct `imck` calls are not a second algorithm. For output-only rejection, they use the same Rust kernels as the fast public routes. Their advantage is smaller Python-boundary work: no object construction, no repeated validation, no default workspace copy, and no retained diagnostics unless the called kernel returns them. Also users can use `*_1d` kernels for their 1-D array calculator - they are designed to be very fast and useful. Once the input is already a contiguous floating workspace, `imck.sigclip_combine(..., validate=False)` and `Combiner(..., copy=False, validate=False).combine(..., diagnostics=None)` are near-tie comparisons around the same core kernel.
+Direct `imck` calls are not a second algorithm. For output-only rejection, they use the same Rust kernels as the fast public routes. Their advantage is smaller Python-boundary work: no object construction, no repeated validation, no default workspace copy, and no retained diagnostics unless the called kernel returns them. Once the input is already a contiguous floating workspace, `imck.sigclip_combine(..., validate=False)` and `Combiner(..., copy=False, validate=False).combine(..., diagnostics=None)` are near-tie comparisons around the same core kernel. Use `reducers` directly for standalone 1-D reductions.
 
 ### Workspace Requirements
 
@@ -351,51 +337,53 @@ Reserve `validate=False` for workloads where profiling shows a real bottleneck; 
 The default settings are good enough for most use cases.
 :::
 
-There are three parameters that control `imc` parallelism:
+`imcombiners` uses the same Rayon worker pool as `reducers`, but rejection
+kernels keep an imc-owned internal parallel policy.
 
-- **`RAYON_NUM_THREADS`** — how many threads Rayon uses inside the Rust kernels. Set it before starting Python, or right after importing `imc` and before any Rayon work; Rayon reads it once at thread-pool initialization and ignores later changes.
-- **`IMCOMBINERS_PARALLEL_THRESHOLD`** — the minimum output-element count required to use Rayon at all. Below this threshold `imc` runs a serial loop instead. The default is `10000`, so images smaller than roughly 100x100 run serially.
-- **`IMCOMBINERS_1D_MINMAX_PARALLEL_THRESHOLD`** — the vector length where `min_1d` and `max_1d` switch from serial scan to Rayon chunk reduction. The default is `1000000`. This is separate from `IMCOMBINERS_PARALLEL_THRESHOLD` because 1-D min/max has one output value, while image-stack combine/rejection parallelizes over many output pixels.
+- **`RAYON_NUM_THREADS`** — how many threads Rayon uses inside Rust kernels. Set it before starting Python; Rayon reads it once at thread-pool initialization.
+- **`reducers` parallel grains** — per-kernel work grains for generic reducers axis reductions. Use reducers' built-in defaults for ordinary use, or run its autotuner on the target machine.
+- **imc rejection policy** — private heuristics for iterative rejection, rank-pair masks, diagnostics, and fused reject+combine paths. These are benchmarked in imc because their cost model is not the same as a generic reducers median or percentile.
 
-Both knobs can be set from the shell before starting Python:
+Set the Rayon thread count from the shell before starting Python:
 
 ```bash
 export RAYON_NUM_THREADS=8
-export IMCOMBINERS_PARALLEL_THRESHOLD=4096
-export IMCOMBINERS_1D_MINMAX_PARALLEL_THRESHOLD=1000000
 python your_pipeline.py
 ```
 
-They can also be set from Python before heavy `imc` work:
+Inspect reducers settings for generic reducer workloads:
 
 ```python
-import imcombiners as imc
+import reducers as rd
 
-imc.set_rayon_num_threads(8)
-imc.set_parallel_threshold(4096)
-imc.set_minmax_1d_parallel_threshold(1_000_000)
-print(
-    imc.get_rayon_num_threads(),
-    imc.get_parallel_threshold(),
-    imc.get_minmax_1d_parallel_threshold(),
-)
+print(rd.get_num_threads())
+print(rd.get_parallel_grains())
+
+# Optional machine/workload-specific tuning:
+# python -m reducers.autotuner
 ```
 
-For a stack shaped `(N, H, W)`, the threshold is compared with `H * W`; for
-arbitrary N-D stacks, it is compared with `np.prod(stack.shape[1:])`.
-For `min_1d` and `max_1d`, the 1-D min/max threshold is compared with
-`values.size`.
+There is no separate imcombiners parallel-control API. This is intentional:
+general reductions are implemented by `reducers`, while imc rejection kernels
+own their private crossover policy. If a rejection benchmark regresses, tune the
+imc rejection policy and only propose a reducers API when the pattern is generic
+outside imcombiners.
 
 ### Thread Benchmark Script
 
-`benchmark_threads.py` measures both the serial path and a range of Rayon thread
-counts in fresh subprocesses, so every candidate gets a clean thread pool. By
-default it runs `sigclip_median` on both `(5, 512, 512)` and `(31, 512, 512)`
-stacks and reports separate recommendations:
+`benchmark_threads.py` measures a single-thread baseline and a range of Rayon
+thread counts in fresh subprocesses, so every candidate gets a clean thread
+pool. By default it runs `sigclip_median` on both `(5, 512, 512)` and
+`(31, 512, 512)` stacks and reports separate recommendations:
 
 ```bash
 uv run python benchmarks/benchmark_threads.py
 ```
+
+The script prints an environment table before the timing results, including
+Python, package versions, OS/kernel details, machine type, and logical CPU
+count. Keep that block with any copied benchmark table so results can be
+compared later.
 
 The reported values are a starting point for the measured workload, not a
 package-wide optimum. To tune for your own shape or operation:
@@ -424,10 +412,10 @@ based on `SLURM_CPUS_PER_TASK`, or `--force-test` to get the sparse
 :::
 
 ::: {.callout-note}
-The benchmark forces `IMCOMBINERS_PARALLEL_THRESHOLD=1` for every parallel
-candidate so Rayon is exercised regardless of image size. This avoids a small
-image silently running the serial path at every thread count. The forced value
-is a measurement tool, not a production recommendation.
+The benchmark uses the active reducers grain settings for generic reducer
+operations and imc's internal policy for rejection kernels. It does not force
+reducers grains to make rejection kernels parallel; rejection crossover tuning
+belongs in imc.
 :::
 
 **More threads does not always mean faster.** Repeated runs can recommend
