@@ -64,15 +64,16 @@ See [docs/quarto/index.qmd](docs/quarto/index.qmd#first-look) for the detailed e
 ## Install
 
 For Python projects:
-
 ```bash
 uv add imcombiners
-
-# For development:
-# You may activate your Python environment before this, e.g.,
-# source ~/.venvs/your_env/bin/activate
-uv pip install -e ".[dev]"
 ```
+OR
+```bash
+uv pip install .
+```
+OR
+```bash
+uv pip install -e .
 ```
 
 For Rust crate use:
