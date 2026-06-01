@@ -45,20 +45,7 @@ if TYPE_CHECKING:
 __all__ = ["Combiner"]
 
 
-_COMBINE_METHODS = {
-    "mean": "mean",
-    "average": "mean",
-    "avg": "mean",
-    "median": "median",
-    "med": "median",
-    "lmedian": "lmedian",
-    "lmed": "lmedian",
-    "sum": "summation",
-    "min": "minimum",
-    "max": "maximum",
-    "variance": "variance",
-    "var": "variance",
-}
+_COMBINE_METHODS = kernels._STACK_FUNCS
 
 
 def _is_threshold_bounds(value: object) -> bool:
@@ -123,10 +110,10 @@ def _combine_array(
     m = method.lower()
     arr_eff = mask_as_nan(arr, mask) if mask is not None else arr
 
-    if m in ("weighted_average", "wvg"):
-        if weight is None:
-            raise ValueError("weight is required for weighted_average")
-        result = kernels.weighted_average(
+    if weight is not None:
+        if m not in ("mean", "average", "avg"):
+            raise ValueError("weight can only be used with mean combine")
+        result = kernels.nanaverage(
             arr_eff,
             validate_weights(weight, arr_eff.shape[0])
             if validate
@@ -138,9 +125,8 @@ def _combine_array(
     canonical = _COMBINE_METHODS.get(m)
     if canonical is None:
         raise ValueError(f"unknown combine method: {method}")
-    if canonical == "variance":
-        return kernels.variance(arr_eff, ddof=ddof, validate=validate)
-    return getattr(kernels, canonical)(arr_eff, validate=validate)
+    kwargs = {"ddof": ddof} if canonical is kernels.rd.nanvar else {}
+    return kernels._stack(arr_eff, canonical, validate=validate, **kwargs)
 
 
 def _apply_zero_scale(
@@ -661,7 +647,7 @@ class Combiner:
         inspection.
         Since ``Combiner`` works on its normalized workspace, ``lmedian`` here
         follows that workspace dtype. Integer-preserving pure lower median is
-        available through :func:`imcombiners.kernels.lmedian` or pure
+        available through ``combine="lmedian"`` or pure
         :func:`imcombiners.ndcombine` calls.
 
         Parameters
@@ -669,10 +655,9 @@ class Combiner:
         method : str
             Combine method. Supported aliases are `"mean"`, `"average"`,
             `"avg"`, `"median"`, `"med"`, `"lmedian"`, `"lmed"`,
-            `"sum"`, `"min"`, `"max"`, `"variance"`, `"var"`,
-            `"weighted_average"` and `"wvg"`.
+            `"sum"`, `"min"`, `"max"`, `"variance"`, `"var"`.
         weight : ndarray of shape (N,), optional
-            Required for ``method="weighted_average"``.
+            Optional weights for ``method="mean"`` / ``"average"`` / ``"avg"``.
         ddof : int, optional
             Delta degrees of freedom for ``method="variance"``. Ignored by
             other combine methods.
@@ -741,10 +726,10 @@ class Combiner:
         else:
             arr_eff = self.arr
 
-        if m in ("weighted_average", "wvg"):
-            if weight is None:
-                raise ValueError("weight is required for weighted_average")
-            result = kernels.weighted_average(
+        if weight is not None:
+            if m not in ("mean", "average", "avg"):
+                raise ValueError("weight can only be used with mean combine")
+            result = kernels.nanaverage(
                 arr_eff,
                 validate_weights(weight, arr_eff.shape[0])
                 if self._validate
@@ -756,10 +741,9 @@ class Combiner:
         canonical = _COMBINE_METHODS.get(m)
         if canonical is None:
             raise ValueError(f"unknown combine method: {method}")
-        if canonical == "variance":
+        if canonical is kernels.rd.nanvar:
             return self.variance(ddof=ddof)
-        else:
-            result = getattr(kernels, canonical)(arr_eff, validate=self._validate)
+        result = kernels._stack(arr_eff, canonical, validate=self._validate)
         return result.reshape(self._trailing_shape)
 
     def _combine_call_pipeline(
@@ -814,7 +798,7 @@ class Combiner:
             validate=self._validate,
         )
 
-        if len(rejectors) == 1:
+        if len(rejectors) == 1 and weight is None:
             try:
                 fused = _fused_reject_combine(
                     arr,
@@ -870,7 +854,7 @@ class Combiner:
             population variance.
         return_mean : bool, optional
             If `True`, also return the per-pixel mean computed from the same
-            final valid values and the same Rust accumulation pass.
+            final valid values.
 
         Returns
         -------
@@ -885,14 +869,16 @@ class Combiner:
         else:
             arr_eff = self.arr
         if return_mean:
-            result = kernels.variance(
+            result = kernels._variance_stack(
                 arr_eff,
                 ddof=ddof,
                 return_mean=True,
                 validate=self._validate,
             )
         else:
-            result = kernels.variance(arr_eff, ddof=ddof, validate=self._validate)
+            result = kernels._variance_stack(
+                arr_eff, ddof=ddof, validate=self._validate
+            )
         if return_mean:
             var, mean = result
             return var.reshape(self._trailing_shape), mean.reshape(self._trailing_shape)

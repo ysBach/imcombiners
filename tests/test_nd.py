@@ -44,20 +44,22 @@ def test_validate_stack_rejects_1d():
         validate_stack(np.ones(5, dtype=np.float32))
 
 
-# ---- combine kernels -----------------------------------------------------------
+# ---- combine paths -------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "method",
     ["mean", "median", "lmedian", "summation", "minimum", "maximum", "variance"],
 )
-def test_combine_kernel_nd_output_shape(method):
+def test_ndcombine_nd_output_shape(method):
     arr_nd, arr_3d = _nd_stack()
     trailing = arr_nd.shape[1:]
 
-    fn = getattr(kernels, method)
-    out_nd = fn(arr_nd)
-    out_3d = fn(arr_3d).reshape(trailing)
+    combine = {"summation": "sum", "minimum": "min", "maximum": "max"}.get(
+        method, method
+    )
+    out_nd = ndcombine(arr_nd, combine=combine)
+    out_3d = ndcombine(arr_3d, combine=combine).reshape(trailing)
 
     assert out_nd.shape == trailing
     np.testing.assert_allclose(out_nd, out_3d, rtol=1e-5)
@@ -78,12 +80,13 @@ def test_combine_kernel_nd_output_shape(method):
         ("variance", np.var),
     ],
 )
-def test_combine_kernel_nd_matches_numpy_for_supported_dtypes(
-    dtype, method, numpy_func
-):
+def test_ndcombine_nd_matches_numpy_for_supported_dtypes(dtype, method, numpy_func):
     arr = (np.arange(5 * 4 * 3 * 2).reshape(5, 4, 3, 2) % 127).astype(dtype)
 
-    out = getattr(kernels, method)(arr)
+    combine = {"summation": "sum", "minimum": "min", "maximum": "max"}.get(
+        method, method
+    )
+    out = ndcombine(arr, combine=combine)
     expected = numpy_func(arr.astype(out.dtype, copy=False), axis=0)
 
     assert out.shape == arr.shape[1:]
@@ -116,25 +119,25 @@ def test_ndcombine_rejects_long_reduction_string_names(method):
         ndcombine(arr, combine=method)
 
 
-def test_weighted_average_nd_output_shape():
+def test_nanaverage_nd_output_shape():
     arr_nd, arr_3d = _nd_stack()
     trailing = arr_nd.shape[1:]
     N = arr_nd.shape[0]
     weights = np.ones(N, dtype=np.float64)
 
-    out_nd = kernels.weighted_average(arr_nd, weights)
-    out_3d = kernels.weighted_average(arr_3d, weights).reshape(trailing)
+    out_nd = kernels.nanaverage(arr_nd, weights)
+    out_3d = kernels.nanaverage(arr_3d, weights).reshape(trailing)
 
     assert out_nd.shape == trailing
     np.testing.assert_allclose(out_nd, out_3d, rtol=1e-5)
 
 
-def test_weighted_average_nd_matches_numpy_with_nan():
+def test_nanaverage_nd_matches_numpy_with_nan():
     arr_nd, _ = _nd_stack(shape=(6, 4, 3, 2))
     arr_nd[0, 0, 0, 0] = np.nan
     weights = np.arange(1, arr_nd.shape[0] + 1, dtype=np.float64)
 
-    out = kernels.weighted_average(arr_nd, weights)
+    out = kernels.nanaverage(arr_nd, weights)
     valid = np.isfinite(arr_nd)
     expected = np.nansum(arr_nd * weights.reshape(-1, 1, 1, 1), axis=0) / np.sum(
         np.where(valid, weights.reshape(-1, 1, 1, 1), 0.0), axis=0
@@ -302,7 +305,7 @@ def test_combiner_nd_integer_copy_false_promotes_and_does_not_share():
 # ---- ndcombine -----------------------------------------------------------------
 
 
-def test_ndcombine_nd_output_shape():
+def test_ndcombine_median_output_shape():
     arr_nd, _ = _nd_stack()
     out = ndcombine(arr_nd, combine="median")
     assert out.shape == arr_nd.shape[1:]
@@ -373,11 +376,12 @@ def test_combiner_nd_zero_scale_statistics_match_ndcombine():
     np.testing.assert_allclose(out_combiner, out_function, rtol=1e-5)
 
 
-def test_ndcombine_validate_false_is_raw_3d_fast_path():
+def test_ndcombine_validate_false_accepts_nd_pure_stack_reduction():
     arr_nd, _ = _nd_stack(shape=(5, 4, 3, 2))
 
-    with pytest.raises(TypeError, match="3-D"):
-        ndcombine(arr_nd, combine="mean", validate=False)
+    out = ndcombine(arr_nd, combine="mean", validate=False)
+
+    np.testing.assert_allclose(out, np.mean(arr_nd, axis=0), rtol=1e-5)
 
 
 def test_3d_mean_and_median_match_ccdproc_when_available():

@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import reducers as rd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -112,7 +113,7 @@ def test_print_results_handles_no_parallel_candidates(capsys):
     assert "No parallel thread candidates were measured." in out
     assert "Recommended measured mode: serial" in out
     assert "export RAYON_NUM_THREADS=" not in out
-    assert "export IMCOMBINERS_PARALLEL_THRESHOLD=4097" in out
+    assert "IMCOMBINERS_PARALLEL_THRESHOLD" not in out
 
 
 def test_best_result_prefers_lowest_median_then_lower_thread_count():
@@ -166,21 +167,18 @@ def test_print_results_includes_copyable_shell_and_python_snippets(capsys):
     bt.print_results(results, args, serial_result=serial)
 
     out = capsys.readouterr().out
-    assert "Fastest observed median: RAYON_NUM_THREADS=16" in out
+    assert "Fastest observed parallel median: RAYON_NUM_THREADS=16" in out
     assert "Recommended measured mode: parallel" in out
     assert "Recommended RAYON_NUM_THREADS=8" in out
     assert "within the near-tie tolerance" in out
     assert "speedup_vs_serial" in out
     assert "export RAYON_NUM_THREADS=8" in out
-    assert "export IMCOMBINERS_PARALLEL_THRESHOLD=4096" in out
-    assert "export IMCOMBINERS_PARALLEL_THRESHOLD=1" not in out
-    assert "parallel candidates were measured with threshold=1" in out
-    assert "Do not use threshold=1 as a global default" in out
-    assert "Practical threshold starting point for this output size: 4096" in out
-    assert "imc.set_rayon_num_threads(8)" in out
-    assert "imc.set_parallel_threshold(4096)" in out
-    assert "print(imc.get_rayon_num_threads())" in out
-    assert "print(imc.get_parallel_threshold())" in out
+    assert "IMCOMBINERS_PARALLEL_THRESHOLD" not in out
+    assert "rejection kernels use imc's internal rejection-parallel policy" in out
+    assert "import reducers as rd" in out
+    assert "rd.get_num_threads()" in out
+    assert "imc.set_rayon_num_threads" not in out
+    assert "imc.set_parallel_threshold" not in out
 
 
 def test_print_results_recommends_serial_when_serial_is_near_tied(capsys):
@@ -197,143 +195,29 @@ def test_print_results_recommends_serial_when_serial_is_near_tied(capsys):
     assert "Recommended measured mode: serial" in out
     assert "speedup_vs_serial" in out
     assert "export RAYON_NUM_THREADS=" not in out
-    assert "export IMCOMBINERS_PARALLEL_THRESHOLD=4097" in out
+    assert "IMCOMBINERS_PARALLEL_THRESHOLD" not in out
     assert "imc.set_rayon_num_threads(" not in out
-    assert "imc.set_parallel_threshold(4097)" in out
+    assert "imc.set_parallel_threshold" not in out
 
 
-def test_parallel_threshold_is_user_tunable():
-    original = imc.get_parallel_threshold()
+def test_reducer_parallel_grains_are_user_tunable():
+    original = rd.get_parallel_grains()
     try:
-        imc.set_parallel_threshold(7)
-        assert imc.get_parallel_threshold() == 7
-        assert imc.kernels.get_parallel_threshold() == 7
+        rd.set_parallel_grain("axis_scan_nan", 7)
+        assert rd.get_parallel_grains()["axis_scan_nan"] == 7
     finally:
-        imc.set_parallel_threshold(original)
+        rd.set_parallel_grains(original)
 
 
-def test_minmax_1d_parallel_threshold_is_user_tunable():
-    original = imc.get_minmax_1d_parallel_threshold()
-    try:
-        imc.set_minmax_1d_parallel_threshold(1234)
-        assert imc.get_minmax_1d_parallel_threshold() == 1234
-        assert imc.kernels.get_minmax_1d_parallel_threshold() == 1234
-    finally:
-        imc.set_minmax_1d_parallel_threshold(original)
+def test_reducer_thread_function_reports_rayon_pool_size():
+    assert isinstance(rd.get_num_threads(), int)
+    assert rd.get_num_threads() >= 1
 
 
-def test_rayon_thread_functions_are_exported_and_validate_values():
-    assert isinstance(imc.get_rayon_num_threads(), int)
-    assert imc.get_rayon_num_threads() >= 1
-    assert imc.kernels.get_rayon_num_threads() == imc.get_rayon_num_threads()
-
-    for value in (0, -1):
-        try:
-            imc.set_rayon_num_threads(value)
-        except ValueError:
-            pass
-        else:  # pragma: no cover - should not happen once API exists
-            raise AssertionError("set_rayon_num_threads accepted nonpositive value")
-
-    for value in (1.2, "8"):
-        try:
-            imc.set_rayon_num_threads(value)  # type: ignore[arg-type]
-        except TypeError:
-            pass
-        else:  # pragma: no cover - should not happen once API exists
-            raise AssertionError("set_rayon_num_threads accepted non-integer value")
-
-
-def test_parallel_threshold_rejects_nonpositive_values():
-    original = imc.get_parallel_threshold()
-    try:
-        for value in (0, -1):
-            try:
-                imc.set_parallel_threshold(value)
-            except ValueError:
-                pass
-            else:  # pragma: no cover - should not happen once API exists
-                raise AssertionError(
-                    "set_parallel_threshold accepted nonpositive value"
-                )
-        assert imc.get_parallel_threshold() == original
-    finally:
-        imc.set_parallel_threshold(original)
-
-
-def test_parallel_threshold_rejects_non_integer_values():
-    original = imc.get_parallel_threshold()
-    try:
-        for value in (1.2, "8"):
-            try:
-                imc.set_parallel_threshold(value)  # type: ignore[arg-type]
-            except TypeError:
-                pass
-            else:  # pragma: no cover - should not happen once API exists
-                raise AssertionError(
-                    "set_parallel_threshold accepted non-integer value"
-                )
-        assert imc.get_parallel_threshold() == original
-    finally:
-        imc.set_parallel_threshold(original)
-
-
-def test_parallel_threshold_environment_variable_is_read_in_new_process():
-    env = os.environ.copy()
-    env["IMCOMBINERS_PARALLEL_THRESHOLD"] = "13"
-    snippet = "import imcombiners as imc; print(imc.get_parallel_threshold())"
-
-    result = subprocess.run(
-        [sys.executable, "-c", snippet],
-        cwd=ROOT,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.stdout.strip() == "13"
-
-
-def test_minmax_1d_parallel_threshold_environment_variable_is_read_in_new_process():
-    env = os.environ.copy()
-    env["IMCOMBINERS_1D_MINMAX_PARALLEL_THRESHOLD"] = "321"
-    snippet = "import imcombiners as imc; print(imc.get_minmax_1d_parallel_threshold())"
-
-    result = subprocess.run(
-        [sys.executable, "-c", snippet],
-        cwd=ROOT,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.stdout.strip() == "321"
-
-
-def test_rayon_thread_count_can_be_set_in_new_process_before_use():
-    snippet = (
-        "import imcombiners as imc; "
-        "imc.set_rayon_num_threads(2); "
-        "print(imc.get_rayon_num_threads())"
-    )
-
-    result = subprocess.run(
-        [sys.executable, "-c", snippet],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.stdout.strip() == "2"
-
-
-def test_rayon_thread_count_environment_variable_is_read_in_new_process():
+def test_rayon_thread_count_environment_variable_is_reported_by_reducers():
     env = os.environ.copy()
     env["RAYON_NUM_THREADS"] = "3"
-    snippet = "import imcombiners as imc; print(imc.get_rayon_num_threads())"
+    snippet = "import reducers as rd; print(rd.get_num_threads())"
 
     result = subprocess.run(
         [sys.executable, "-c", snippet],
@@ -347,45 +231,22 @@ def test_rayon_thread_count_environment_variable_is_read_in_new_process():
     assert result.stdout.strip() == "3"
 
 
-def test_rayon_thread_count_set_fails_after_pool_initialization():
-    snippet = (
-        "import imcombiners as imc; "
-        "imc.get_rayon_num_threads(); "
-        "\ntry:\n"
-        "    imc.set_rayon_num_threads(2)\n"
-        "except RuntimeError as exc:\n"
-        "    print(type(exc).__name__)\n"
-        "else:\n"
-        "    raise SystemExit('set_rayon_num_threads unexpectedly succeeded')\n"
-    )
-
-    result = subprocess.run(
-        [sys.executable, "-c", snippet],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.stdout.strip() == "RuntimeError"
-
-
-def test_parallel_threshold_does_not_change_combine_or_reject_results():
+def test_reducer_parallel_grains_do_not_change_combine_or_reject_results():
     rng = np.random.default_rng(20250311)
     arr = rng.normal(size=(7, 8, 9)).astype(np.float64)
     arr[0, 2, 3] = np.nan
-    original = imc.get_parallel_threshold()
+    original = rd.get_parallel_grains()
     try:
-        imc.set_parallel_threshold(10_000)
-        serial_mean = imc.mean(arr)
+        rd.set_parallel_grains({key: 10**12 for key in original})
+        serial_mean = imc.ndcombine(arr, combine="mean")
         serial_rej = imc.sigclip(arr, sigma=2.0, maxiters=2)
 
-        imc.set_parallel_threshold(1)
-        parallel_mean = imc.mean(arr)
+        rd.set_parallel_grains({key: 1 for key in original})
+        parallel_mean = imc.ndcombine(arr, combine="mean")
         parallel_rej = imc.sigclip(arr, sigma=2.0, maxiters=2)
 
         np.testing.assert_allclose(parallel_mean, serial_mean, equal_nan=True)
         for parallel, serial in zip(parallel_rej, serial_rej, strict=True):
             np.testing.assert_array_equal(parallel, serial)
     finally:
-        imc.set_parallel_threshold(original)
+        rd.set_parallel_grains(original)

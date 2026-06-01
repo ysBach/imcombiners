@@ -427,18 +427,26 @@ def test_spec_reuse_across_stacks():
         assert out.shape == (4, 4)
 
 
-def test_weighted_average_via_combiner():
+def test_nanaverage_via_mean_weights_in_combiner():
     arr = np.ones((3, 2, 2), dtype=np.float32)
     arr[0] *= 10
     arr[1] *= 20
     arr[2] *= 30
-    out = Combiner(arr).combine("weighted_average", weight=np.array([1.0, 1.0, 2.0]))
+    out = Combiner(arr).combine("mean", weight=np.array([1.0, 1.0, 2.0]))
     expected = (10 * 1 + 20 * 1 + 30 * 2) / 4
     np.testing.assert_allclose(out, expected)
-    np.testing.assert_allclose(
-        Combiner(arr).combine("wvg", weight=np.array([1.0, 1.0, 2.0])),
-        expected,
-    )
+
+
+def test_combiner_rejects_removed_weighted_average_methods():
+    arr = np.ones((3, 2, 2), dtype=np.float32)
+    weights = np.array([1.0, 1.0, 2.0])
+
+    with pytest.raises(ValueError, match="unknown combine method"):
+        Combiner(arr).combine("weighted_average")
+    with pytest.raises(ValueError, match="weight.*mean"):
+        Combiner(arr).combine("weighted_average", weight=weights)
+    with pytest.raises(ValueError, match="weight.*mean"):
+        Combiner(arr).combine("median", weight=weights)
 
 
 def test_combiner_inline_rejectors_full_false_uses_fused(monkeypatch):
@@ -609,21 +617,12 @@ def test_combiner_variance_can_return_mean_from_final_valid_values():
     np.testing.assert_allclose(mean, np.nanmean(arr_eff, axis=0), rtol=1e-5)
 
 
-def test_combiner_variance_owns_implementation(monkeypatch):
+def test_combiner_var_alias_uses_requested_ddof():
     arr = np.arange(12, dtype=np.float32).reshape(3, 2, 2)
-    called = {}
-
-    def fake_variance(arr_eff, *, ddof=0, validate=True):
-        called["ddof"] = ddof
-        called["validate"] = validate
-        return np.full(arr_eff.shape[1:], 7.0, dtype=np.float32)
-
-    monkeypatch.setattr("imcombiners.kernels.variance", fake_variance)
 
     out = Combiner(arr).combine("var", ddof=2)
 
-    assert called == {"ddof": 2, "validate": True}
-    np.testing.assert_array_equal(out, np.full((2, 2), 7.0, dtype=np.float32))
+    np.testing.assert_allclose(out, np.var(arr, axis=0, ddof=2), rtol=1e-6)
 
 
 @pytest.mark.parametrize("method", ["sum", "min", "max"])

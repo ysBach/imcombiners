@@ -34,11 +34,13 @@ def _stack() -> np.ndarray:
 
 
 def _combine_masked(arr: np.ndarray, mask: np.ndarray, combine: str) -> np.ndarray:
+    import reducers as rd
+
     masked = mask_as_nan(arr, mask)
     if combine == "mean":
-        return imc.kernels.mean(masked, validate=False)
+        return rd.nanmean(masked, axis=0, validate=False)
     if combine == "median":
-        return imc.kernels.median(masked, validate=False)
+        return rd.nanmedian(masked, axis=0, validate=False)
     raise AssertionError(f"unsupported combine method in test: {combine}")
 
 

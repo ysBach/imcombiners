@@ -94,78 +94,13 @@ output_flags : ndarray of uint8, shape (*spatial)
 
 
 _COMBINE_SPECS = {
-    "mean": (
-        "Return the NaN-aware mean along the stack axis.",
-        "",
-        "mean : ndarray, shape (*spatial)\n"
-        "    Per-pixel mean of finite values. All-NaN output elements return `NaN`.",
-        "",
-    ),
-    "median": (
-        "Return the NaN-aware median along the stack axis.",
-        "",
-        "median : ndarray, shape (*spatial)\n"
-        "    Per-pixel median of finite values. For an even number of finite "
-        "values, the two middle values are averaged. All-NaN output elements return "
-        "`NaN`.",
-        "",
-    ),
-    "lmedian": (
-        "IRAF-style lower median along the stack axis.",
-        "",
-        "lmedian : ndarray, shape (*spatial)\n"
-        "    Per-pixel lower median. For an even number of finite values, this "
-        "is the lower of the two middle values rather than their average.",
-        "Accepted integer dtypes (`uint8`, `uint16`, `int16`, `int32`) are "
-        "passed through without promotion so the output dtype matches the "
-        "input. Any path that needs NaN masking, rejection, zero, or scale "
-        "should convert the stack to a floating workspace before calling this "
-        "function.",
-    ),
-    "summation": (
-        "Return the NaN-aware sum along the stack axis.",
-        "",
-        "sum : ndarray, shape (*spatial)\n"
-        "    Per-pixel sum of finite values. All-NaN output elements return `NaN`.",
-        "",
-    ),
-    "minimum": (
-        "Return the NaN-aware minimum along the stack axis.",
-        "",
-        "minimum : ndarray, shape (*spatial)\n"
-        "    Per-pixel minimum of finite values. All-NaN output elements return `NaN`.",
-        "",
-    ),
-    "maximum": (
-        "Return the NaN-aware maximum along the stack axis.",
-        "",
-        "maximum : ndarray, shape (*spatial)\n"
-        "    Per-pixel maximum of finite values. All-NaN output elements return `NaN`.",
-        "",
-    ),
-    "variance": (
-        "Return the NaN-aware variance along the stack axis.",
-        "ddof : int, optional\n"
-        "    Delta degrees of freedom. The returned value is "
-        "``sum((valid - mean)**2) / (nvalid - ddof)``. Pixels with "
-        "``nvalid <= ddof`` return `NaN`.\n"
-        "return_mean : bool, optional\n"
-        "    If `True`, also return the per-pixel mean from the same "
-        "accumulation pass.",
-        "variance : ndarray, shape (*spatial)\n"
-        "    Per-pixel variance of finite values. Use ``np.sqrt(var)`` if a "
-        "standard-deviation or error-like map is needed.\n"
-        "mean : ndarray, shape (*spatial)\n"
-        "    Returned only when `return_mean=True`.",
-        "",
-    ),
-    "weighted_average": (
+    "nanaverage": (
         "Return the NaN-aware weighted average along the stack axis.",
         "weights : ndarray, shape (N,)\n"
         "    Per-plane weights. The weighted sum skips non-finite pixels, so "
         "the effective denominator is the sum of weights for finite values at "
         "each output pixel.",
-        "weighted_average : ndarray, shape (*spatial)\n"
+        "nanaverage : ndarray, shape (*spatial)\n"
         "    Per-pixel weighted average. Pixels with no finite weighted samples "
         "return `NaN`.",
         "",

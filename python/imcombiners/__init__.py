@@ -44,26 +44,12 @@ from ._rejectors import (
 from ._validation import resolve_zero_scale
 from .kernels import (
     ccdclip,
-    get_minmax_1d_parallel_threshold,
-    get_parallel_threshold,
-    get_rayon_num_threads,
     grow_mask,
     linearclip,
-    lmedian,
-    maximum,
-    mean,
-    median,
-    minimum,
     minmax,
+    nanaverage,
     pclip,
-    percentiles,
-    set_minmax_1d_parallel_threshold,
-    set_parallel_threshold,
-    set_rayon_num_threads,
     sigclip,
-    summation,
-    variance,
-    weighted_average,
 )
 
 __all__ = [
@@ -83,32 +69,17 @@ __all__ = [
     # Compat
     "ndcombine",
     "place_into_padded",
-    # Combine functions
-    "mean",
-    "median",
-    "lmedian",
-    "summation",
-    "minimum",
-    "maximum",
-    "variance",
-    "weighted_average",
+    # Weighted combine helper
+    "nanaverage",
     # Reject functions
     "sigclip",
     "ccdclip",
     "linearclip",
     "minmax",
     "pclip",
-    "percentiles",
     "grow_mask",
     # Zero/scale helper
     "resolve_zero_scale",
-    # Parallel controls
-    "get_rayon_num_threads",
-    "set_rayon_num_threads",
-    "get_parallel_threshold",
-    "set_parallel_threshold",
-    "get_minmax_1d_parallel_threshold",
-    "set_minmax_1d_parallel_threshold",
     "__version__",
 ]
 

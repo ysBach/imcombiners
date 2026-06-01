@@ -6,47 +6,94 @@
 
 use ndarray::{Array2, Array3, ArrayView3};
 use rayon::prelude::*;
+use reducers::reducers_1d::{lmedian_valid_in_place, median_valid_in_place};
+use std::any::TypeId;
 use std::cmp::Ordering;
 
-use super::utils::{parallel_threshold, Float};
+use super::utils::Float;
 
 const SAMPLE_RESTORED_NKEEP: u8 = 64;
 const SAMPLE_RESTORED_MAXREJ: u8 = 128;
+const DEFAULT_REJECT_PARALLEL_HW_THRESHOLD: usize = 10_000;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RejectKind {
+    LinearClip,
+    SigClip,
+    CcdClip,
+    MinMax,
+    PClip,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RejectDType {
+    F32,
+    F64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RejectOutputMode {
+    Diagnostics,
+    MaskOnly,
+    RestoredFlags,
+    FinalMean,
+    FinalMedian,
+}
 
 #[inline]
-fn cmp_f64(a: &f64, b: &f64) -> Ordering {
-    a.total_cmp(b)
+fn reject_dtype<T: Float>() -> RejectDType {
+    if TypeId::of::<T>() == TypeId::of::<f32>() {
+        RejectDType::F32
+    } else {
+        RejectDType::F64
+    }
+}
+
+#[inline]
+fn final_output_mode(kind: FinalCombineKind) -> RejectOutputMode {
+    match kind {
+        FinalCombineKind::Mean => RejectOutputMode::FinalMean,
+        FinalCombineKind::Median => RejectOutputMode::FinalMedian,
+    }
+}
+
+#[inline]
+fn should_parallel_reject(
+    kind: RejectKind,
+    hw: usize,
+    n: usize,
+    dtype: RejectDType,
+    output_mode: RejectOutputMode,
+) -> bool {
+    // Rejection kernels own their Rayon crossover policy because iterative
+    // clipping, rank-pair masks, diagnostics, and fused final combines do not
+    // have the same cost model as reducers' generic order-statistic kernels.
+    // This is the old imc conservative baseline; benchmark data should tune the
+    // match arms below by kind/dtype/output mode without making reducers carry
+    // imc-specific knobs.
+    let threshold = match (kind, dtype, output_mode) {
+        (RejectKind::LinearClip, _, _) => DEFAULT_REJECT_PARALLEL_HW_THRESHOLD,
+        (RejectKind::SigClip, _, _) => DEFAULT_REJECT_PARALLEL_HW_THRESHOLD,
+        (RejectKind::CcdClip, _, _) => DEFAULT_REJECT_PARALLEL_HW_THRESHOLD,
+        (RejectKind::MinMax, _, _) => DEFAULT_REJECT_PARALLEL_HW_THRESHOLD,
+        (RejectKind::PClip, _, _) => DEFAULT_REJECT_PARALLEL_HW_THRESHOLD,
+    };
+    n > 0 && hw >= threshold
+}
+
+#[inline]
+fn should_parallel_reject_for<T: Float>(
+    kind: RejectKind,
+    hw: usize,
+    n: usize,
+    output_mode: RejectOutputMode,
+) -> bool {
+    should_parallel_reject(kind, hw, n, reject_dtype::<T>(), output_mode)
 }
 
 #[inline]
 fn cmp_pair_t<T: Float>(a: &(T, usize), b: &(T, usize)) -> Ordering {
     a.0.to_f64().total_cmp(&b.0.to_f64())
-}
-
-#[inline]
-fn median_f64(buf: &mut [f64]) -> f64 {
-    let n = buf.len();
-    let mid = n / 2;
-    if n % 2 == 1 {
-        let (_, value, _) = buf.select_nth_unstable_by(mid, cmp_f64);
-        *value
-    } else {
-        let (_, upper, _) = buf.select_nth_unstable_by(mid, cmp_f64);
-        let upper = *upper;
-        let lower = buf[..mid]
-            .iter()
-            .copied()
-            .max_by(|a, b| a.total_cmp(b))
-            .expect("even median lower partition is non-empty");
-        (lower + upper) / 2.0
-    }
-}
-
-#[inline]
-fn lower_median_f64(buf: &mut [f64]) -> f64 {
-    let idx = (buf.len() - 1) / 2;
-    let (_, value, _) = buf.select_nth_unstable_by(idx, cmp_f64);
-    *value
 }
 
 #[inline]
@@ -385,7 +432,12 @@ pub fn linearclip<T: Float>(
         }
     };
 
-    let results: Vec<Px<T>> = if hw >= parallel_threshold() {
+    let results: Vec<Px<T>> = if should_parallel_reject_for::<T>(
+        RejectKind::LinearClip,
+        hw,
+        n,
+        RejectOutputMode::Diagnostics,
+    ) {
         (0..hw).into_par_iter().map(compute_pixel).collect()
     } else {
         (0..hw).map(compute_pixel).collect()
@@ -500,7 +552,12 @@ pub fn linearclip_restored_flags<T: Float>(
         }
     };
 
-    let results: Vec<Px> = if hw >= parallel_threshold() {
+    let results: Vec<Px> = if should_parallel_reject_for::<T>(
+        RejectKind::LinearClip,
+        hw,
+        n,
+        RejectOutputMode::RestoredFlags,
+    ) {
         (0..hw).into_par_iter().map(compute_pixel).collect()
     } else {
         (0..hw).map(compute_pixel).collect()
@@ -551,7 +608,6 @@ impl SigClipPixelScratch {
 // All helpers in this section assume the caller has already folded input
 // masks and non-finite values into `mask`.
 
-#[inline]
 fn col_nanmean_var<T: Float>(vals: &[T], mask: &[bool], ddof: usize) -> (T, f64) {
     debug_assert_mask_covers_nonfinite(vals, mask);
     let mut s = 0.0_f64;
@@ -609,7 +665,7 @@ fn col_nanmedian<T: Float>(vals: &[T], mask: &[bool], buf: &mut Vec<f64>) -> T {
     if n == 0 {
         return T::nan();
     }
-    T::from_f64(median_f64(buf))
+    T::from_f64(median_valid_in_place(buf))
 }
 
 #[inline]
@@ -625,7 +681,7 @@ fn col_nanlmedian<T: Float>(vals: &[T], mask: &[bool], buf: &mut Vec<f64>) -> T 
     if n == 0 {
         return T::nan();
     }
-    T::from_f64(lower_median_f64(buf))
+    T::from_f64(lmedian_valid_in_place(buf))
 }
 
 #[inline]
@@ -673,7 +729,7 @@ fn col_nanmad_sigma_about<T: Float>(
     if n <= ddof {
         return T::nan();
     }
-    let mut sigma = 1.4826 * median_f64(buf);
+    let mut sigma = 1.4826 * median_valid_in_place(buf);
     if ddof > 0 {
         sigma *= (n as f64 / (n - ddof) as f64).sqrt();
     }
@@ -729,7 +785,7 @@ fn final_median<T: Float>(vals: &[T], mask: &[bool], buf: &mut Vec<f64>) -> T {
     if n == 0 {
         return T::nan();
     }
-    T::from_f64(median_f64(buf))
+    T::from_f64(median_valid_in_place(buf))
 }
 
 #[inline]
@@ -778,7 +834,7 @@ fn final_combine_from_sorted_pairs_t<T: Float>(
             if buf.is_empty() {
                 T::nan()
             } else {
-                T::from_f64(median_f64(buf))
+                T::from_f64(median_valid_in_place(buf))
             }
         }
     }
@@ -817,7 +873,7 @@ fn final_combine_from_sorted_pairs_f64<T: Float>(
             if buf.is_empty() {
                 T::nan()
             } else {
-                T::from_f64(median_f64(buf))
+                T::from_f64(median_valid_in_place(buf))
             }
         }
     }
@@ -1272,20 +1328,26 @@ fn sigclip_final_combine<T: Float>(
         )
     };
 
-    let vals: Vec<T> = if hw >= parallel_threshold() {
-        (0..hw)
-            .into_par_iter()
-            .map_init(
-                || SigClipCombineScratch::<T>::with_capacity(n),
-                compute_pixel,
-            )
-            .collect()
+    let reject_kind = if p.ccdclip || rejection_gain != 1.0 {
+        RejectKind::CcdClip
     } else {
-        let mut scratch = SigClipCombineScratch::<T>::with_capacity(n);
-        (0..hw)
-            .map(|idx| compute_pixel(&mut scratch, idx))
-            .collect()
+        RejectKind::SigClip
     };
+    let vals: Vec<T> =
+        if should_parallel_reject_for::<T>(reject_kind, hw, n, final_output_mode(kind)) {
+            (0..hw)
+                .into_par_iter()
+                .map_init(
+                    || SigClipCombineScratch::<T>::with_capacity(n),
+                    compute_pixel,
+                )
+                .collect()
+        } else {
+            let mut scratch = SigClipCombineScratch::<T>::with_capacity(n);
+            (0..hw)
+                .map(|idx| compute_pixel(&mut scratch, idx))
+                .collect()
+        };
 
     Array2::from_shape_vec((h, w), vals).expect("sigclip final-combine result shape mismatch")
 }
@@ -1430,20 +1492,26 @@ pub fn sigclip_restored_flags<T: Float>(
         scratch.restored_col.clone()
     };
 
-    let results: Vec<Vec<u8>> = if hw >= parallel_threshold() {
-        (0..hw)
-            .into_par_iter()
-            .map_init(
-                || SigClipResultScratch::<T>::with_capacity(n),
-                compute_pixel,
-            )
-            .collect()
+    let reject_kind = if p.ccdclip {
+        RejectKind::CcdClip
     } else {
-        let mut scratch = SigClipResultScratch::<T>::with_capacity(n);
-        (0..hw)
-            .map(|idx| compute_pixel(&mut scratch, idx))
-            .collect()
+        RejectKind::SigClip
     };
+    let results: Vec<Vec<u8>> =
+        if should_parallel_reject_for::<T>(reject_kind, hw, n, RejectOutputMode::RestoredFlags) {
+            (0..hw)
+                .into_par_iter()
+                .map_init(
+                    || SigClipResultScratch::<T>::with_capacity(n),
+                    compute_pixel,
+                )
+                .collect()
+        } else {
+            let mut scratch = SigClipResultScratch::<T>::with_capacity(n);
+            (0..hw)
+                .map(|idx| compute_pixel(&mut scratch, idx))
+                .collect()
+        };
 
     let flags_slice = flags_out
         .as_slice_memory_order_mut()
@@ -1525,7 +1593,21 @@ fn sigclip_impl<T: Float>(
         }
     };
 
-    let results: Vec<Px<T>> = if hw >= parallel_threshold() {
+    let reject_kind = if p.ccdclip {
+        RejectKind::CcdClip
+    } else {
+        RejectKind::SigClip
+    };
+    let results: Vec<Px<T>> = if should_parallel_reject_for::<T>(
+        reject_kind,
+        hw,
+        n,
+        if diagnostics {
+            RejectOutputMode::Diagnostics
+        } else {
+            RejectOutputMode::MaskOnly
+        },
+    ) {
         (0..hw)
             .into_par_iter()
             .map_init(
@@ -1684,7 +1766,12 @@ pub fn minmax<T: Float>(
         }
     };
 
-    let results: Vec<Px<T>> = if hw >= parallel_threshold() {
+    let results: Vec<Px<T>> = if should_parallel_reject_for::<T>(
+        RejectKind::MinMax,
+        hw,
+        n,
+        RejectOutputMode::Diagnostics,
+    ) {
         (0..hw)
             .into_par_iter()
             .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
@@ -1763,17 +1850,18 @@ pub fn minmax_mask<T: Float>(
         scratch.mask.clone()
     };
 
-    let results: Vec<Vec<bool>> = if hw >= parallel_threshold() {
-        (0..hw)
-            .into_par_iter()
-            .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
-            .collect()
-    } else {
-        let mut scratch = RankCombineScratch::<T>::with_capacity(n);
-        (0..hw)
-            .map(|idx| compute_pixel(&mut scratch, idx))
-            .collect()
-    };
+    let results: Vec<Vec<bool>> =
+        if should_parallel_reject_for::<T>(RejectKind::MinMax, hw, n, RejectOutputMode::MaskOnly) {
+            (0..hw)
+                .into_par_iter()
+                .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
+                .collect()
+        } else {
+            let mut scratch = RankCombineScratch::<T>::with_capacity(n);
+            (0..hw)
+                .map(|idx| compute_pixel(&mut scratch, idx))
+                .collect()
+        };
 
     let mask_slice = mask_out
         .as_slice_memory_order_mut()
@@ -1903,17 +1991,18 @@ fn minmax_final_combine<T: Float>(
         )
     };
 
-    let vals: Vec<T> = if hw >= parallel_threshold() {
-        (0..hw)
-            .into_par_iter()
-            .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
-            .collect()
-    } else {
-        let mut scratch = RankCombineScratch::<T>::with_capacity(n);
-        (0..hw)
-            .map(|idx| compute_pixel(&mut scratch, idx))
-            .collect()
-    };
+    let vals: Vec<T> =
+        if should_parallel_reject_for::<T>(RejectKind::MinMax, hw, n, final_output_mode(kind)) {
+            (0..hw)
+                .into_par_iter()
+                .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
+                .collect()
+        } else {
+            let mut scratch = RankCombineScratch::<T>::with_capacity(n);
+            (0..hw)
+                .map(|idx| compute_pixel(&mut scratch, idx))
+                .collect()
+        };
 
     Array2::from_shape_vec((h, w), vals).expect("minmax final-combine result shape mismatch")
 }
@@ -2249,17 +2338,19 @@ pub fn pclip<T: Float>(
         }
     };
 
-    let results: Vec<Px<T>> = if hw >= parallel_threshold() {
-        (0..hw)
-            .into_par_iter()
-            .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
-            .collect()
-    } else {
-        let mut scratch = RankCombineScratch::<T>::with_capacity(n);
-        (0..hw)
-            .map(|idx| compute_pixel(&mut scratch, idx))
-            .collect()
-    };
+    let results: Vec<Px<T>> =
+        if should_parallel_reject_for::<T>(RejectKind::PClip, hw, n, RejectOutputMode::Diagnostics)
+        {
+            (0..hw)
+                .into_par_iter()
+                .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
+                .collect()
+        } else {
+            let mut scratch = RankCombineScratch::<T>::with_capacity(n);
+            (0..hw)
+                .map(|idx| compute_pixel(&mut scratch, idx))
+                .collect()
+        };
 
     let mask_slice = mask_out
         .as_slice_memory_order_mut()
@@ -2340,17 +2431,18 @@ pub fn pclip_mask<T: Float>(
         scratch.mask.clone()
     };
 
-    let results: Vec<Vec<bool>> = if hw >= parallel_threshold() {
-        (0..hw)
-            .into_par_iter()
-            .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
-            .collect()
-    } else {
-        let mut scratch = RankCombineScratch::<T>::with_capacity(n);
-        (0..hw)
-            .map(|idx| compute_pixel(&mut scratch, idx))
-            .collect()
-    };
+    let results: Vec<Vec<bool>> =
+        if should_parallel_reject_for::<T>(RejectKind::PClip, hw, n, RejectOutputMode::MaskOnly) {
+            (0..hw)
+                .into_par_iter()
+                .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
+                .collect()
+        } else {
+            let mut scratch = RankCombineScratch::<T>::with_capacity(n);
+            (0..hw)
+                .map(|idx| compute_pixel(&mut scratch, idx))
+                .collect()
+        };
 
     let mask_slice = mask_out
         .as_slice_memory_order_mut()
@@ -2466,17 +2558,18 @@ fn pclip_final_combine<T: Float>(
         )
     };
 
-    let vals: Vec<T> = if hw >= parallel_threshold() {
-        (0..hw)
-            .into_par_iter()
-            .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
-            .collect()
-    } else {
-        let mut scratch = RankCombineScratch::<T>::with_capacity(n);
-        (0..hw)
-            .map(|idx| compute_pixel(&mut scratch, idx))
-            .collect()
-    };
+    let vals: Vec<T> =
+        if should_parallel_reject_for::<T>(RejectKind::PClip, hw, n, final_output_mode(kind)) {
+            (0..hw)
+                .into_par_iter()
+                .map_init(|| RankCombineScratch::<T>::with_capacity(n), compute_pixel)
+                .collect()
+        } else {
+            let mut scratch = RankCombineScratch::<T>::with_capacity(n);
+            (0..hw)
+                .map(|idx| compute_pixel(&mut scratch, idx))
+                .collect()
+        };
 
     Array2::from_shape_vec((h, w), vals).expect("pclip final-combine result shape mismatch")
 }
@@ -2590,4 +2683,48 @@ pub fn pclip_median_1d<T: Float>(
         nkeep,
         FinalCombineKind::Median,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        should_parallel_reject, RejectDType, RejectKind, RejectOutputMode,
+        DEFAULT_REJECT_PARALLEL_HW_THRESHOLD,
+    };
+
+    #[test]
+    fn rejection_parallel_policy_is_owned_by_imc() {
+        assert!(!should_parallel_reject(
+            RejectKind::SigClip,
+            DEFAULT_REJECT_PARALLEL_HW_THRESHOLD - 1,
+            31,
+            RejectDType::F32,
+            RejectOutputMode::FinalMedian,
+        ));
+        assert!(should_parallel_reject(
+            RejectKind::SigClip,
+            DEFAULT_REJECT_PARALLEL_HW_THRESHOLD,
+            31,
+            RejectDType::F32,
+            RejectOutputMode::FinalMedian,
+        ));
+    }
+
+    #[test]
+    fn rejection_parallel_policy_keeps_empty_work_serial() {
+        assert!(!should_parallel_reject(
+            RejectKind::MinMax,
+            DEFAULT_REJECT_PARALLEL_HW_THRESHOLD,
+            0,
+            RejectDType::F64,
+            RejectOutputMode::MaskOnly,
+        ));
+        assert!(!should_parallel_reject(
+            RejectKind::PClip,
+            0,
+            31,
+            RejectDType::F32,
+            RejectOutputMode::Diagnostics,
+        ));
+    }
 }

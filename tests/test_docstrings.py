@@ -3,10 +3,10 @@ from imcombiners import kernels
 
 
 def test_kernel_docstrings_are_installed_from_shared_templates():
-    assert kernels.mean.__doc__ is not None
-    assert "Return the NaN-aware mean along the stack axis." in kernels.mean.__doc__
-    assert "arr : ndarray, shape (N, *spatial)" in kernels.mean.__doc__
-    assert "Accepted dtypes are" in kernels.mean.__doc__
+    assert kernels.nanaverage.__doc__ is not None
+    assert "Return the NaN-aware weighted average" in kernels.nanaverage.__doc__
+    assert "arr : ndarray, shape (N, *spatial)" in kernels.nanaverage.__doc__
+    assert "Accepted dtypes are" in kernels.nanaverage.__doc__
 
 
 def test_rejection_kernel_docstrings_keep_diagnostics_details():

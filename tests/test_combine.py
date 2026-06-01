@@ -29,6 +29,37 @@ def test_median_no_nan(stack):
     np.testing.assert_allclose(out, np.median(stack, axis=0), rtol=1e-5)
 
 
+def test_median_and_lmedian_skip_nan_and_inf():
+    arr = np.array([1.0, np.nan, np.inf, 5.0], dtype=np.float32).reshape(4, 1, 1)
+
+    median = _core.combine(arr, "median")
+    lmedian = _core.combine(arr, "lmedian")
+
+    np.testing.assert_allclose(median, [[3.0]])
+    np.testing.assert_allclose(lmedian, [[1.0]])
+
+
+def test_percentiles_skip_nan_and_inf():
+    arr = np.array(
+        [
+            [[1.0, np.nan]],
+            [[np.nan, np.inf]],
+            [[5.0, 3.0]],
+            [[9.0, 7.0]],
+        ],
+        dtype=np.float32,
+    )
+
+    out = _core.percentiles(arr, np.array([0.0, 50.0, 100.0], dtype=np.float64))
+    expected = np.nanpercentile(
+        np.where(np.isfinite(arr), arr, np.nan),
+        [0.0, 50.0, 100.0],
+        axis=0,
+    )
+
+    np.testing.assert_allclose(np.moveaxis(out, -1, 0), expected)
+
+
 def test_min_max(stack):
     np.testing.assert_allclose(_core.combine(stack, "min"), stack.min(axis=0))
     np.testing.assert_allclose(_core.combine(stack, "max"), stack.max(axis=0))
@@ -78,72 +109,51 @@ def test_ndcombine_short_aliases(alias, expected):
     np.testing.assert_allclose(out, expected(arr, axis=0), rtol=1e-5)
 
 
-def test_top_level_variance_matches_nanvar():
+@pytest.mark.parametrize(("combine", "expected"), [("min", np.min), ("max", np.max)])
+def test_ndcombine_integer_minmax_preserves_input_dtype(combine, expected):
+    arr = np.arange(24, dtype=np.uint16).reshape(3, 2, 4)
+
+    out = ndcombine(arr, combine=combine)
+
+    assert out.dtype == arr.dtype
+    np.testing.assert_array_equal(out, expected(arr, axis=0))
+
+
+def test_ndcombine_pure_stack_reductions_skip_nan_and_inf():
+    arr = np.array([1.0, np.nan, np.inf], dtype=np.float32).reshape(3, 1, 1)
+
+    out = ndcombine(arr, combine="mean")
+
+    np.testing.assert_allclose(out, [[1.0]])
+
+
+def test_combiner_variance_matches_nanvar():
     rng = np.random.default_rng(20250311)
     arr = rng.normal(0, 1, (8, 3, 4)).astype(np.float32)
 
-    out = imc.variance(arr, ddof=0)
+    out = imc.Combiner(arr).variance(ddof=0)
 
     np.testing.assert_allclose(out, np.nanvar(arr, axis=0, ddof=0), rtol=1e-5)
 
 
-def test_kernel_variance_can_return_mean_from_same_pass():
+def test_combiner_variance_can_return_mean_from_same_pass():
     rng = np.random.default_rng(20250311)
     arr = rng.normal(0, 1, (8, 3, 4)).astype(np.float32)
     arr[0, 1, 2] = np.nan
 
-    var, mean = imc.variance(arr, ddof=1, return_mean=True)
+    var, mean = imc.Combiner(arr).variance(ddof=1, return_mean=True)
 
     np.testing.assert_allclose(var, np.nanvar(arr, axis=0, ddof=1), rtol=1e-5)
     np.testing.assert_allclose(mean, np.nanmean(arr, axis=0), rtol=1e-5)
 
 
-def test_kernel_variance_return_mean_keeps_mean_when_variance_is_undefined():
+def test_combiner_variance_return_mean_keeps_mean_when_variance_is_undefined():
     arr = np.array([1.0, np.nan], dtype=np.float32).reshape(2, 1, 1)
 
-    var, mean = imc.variance(arr, ddof=1, return_mean=True)
+    var, mean = imc.Combiner(arr).variance(ddof=1, return_mean=True)
 
     assert np.isnan(var[0, 0])
     np.testing.assert_allclose(mean[0, 0], 1.0)
-
-
-def test_kernel_percentiles_matches_numpy_nanpercentile_scalar_q():
-    rng = np.random.default_rng(20260529)
-    arr = rng.normal(size=(9, 3, 4)).astype(np.float32)
-    arr[0, 1, 2] = np.nan
-
-    out = imc.percentiles(arr, 25.0)
-
-    np.testing.assert_allclose(out, np.nanpercentile(arr, 25.0, axis=0), rtol=1e-6)
-    assert out.shape == arr.shape[1:]
-
-
-def test_kernel_percentiles_accepts_multiple_q_with_leading_q_axis():
-    rng = np.random.default_rng(20260529)
-    arr = rng.normal(size=(9, 3, 4)).astype(np.float64)
-    arr[0, 1, 2] = np.nan
-    q = np.array([0.0, 25.0, 50.0, 100.0])
-
-    out = imc.percentiles(arr, q)
-
-    np.testing.assert_allclose(out, np.nanpercentile(arr, q, axis=0), rtol=1e-12)
-    assert out.shape == (4, *arr.shape[1:])
-
-
-def test_kernel_percentiles_returns_nan_for_all_nan_stack_slice():
-    arr = np.array(
-        [
-            [[np.nan, 1.0]],
-            [[np.nan, 3.0]],
-            [[np.nan, 5.0]],
-        ],
-        dtype=np.float32,
-    )
-
-    out = imc.percentiles(arr, 50.0)
-
-    assert np.isnan(out[0, 0])
-    np.testing.assert_allclose(out[0, 1], 3.0)
 
 
 def test_ndcombine_variance_after_rejection_matches_final_mask():
@@ -1026,19 +1036,20 @@ def test_ndcombine_lmedian_with_zero_uses_float_workspace():
     np.testing.assert_allclose(out, np.sort(arr.astype(np.float32) - 1, axis=0)[2])
 
 
-def test_weighted_average():
+def test_nanaverage_core_and_mean_weights():
     arr = np.ones((3, 2, 2), dtype=np.float32)
     arr[0] *= 10
     arr[1] *= 20
     arr[2] *= 30
     w = np.array([1.0, 1.0, 2.0])
-    out = _core.combine(arr, "weighted_average", weights=w)
+    out = _core.nanaverage(arr, w)
     expected = (10 * 1 + 20 * 1 + 30 * 2) / 4
     np.testing.assert_allclose(out, expected)
-    np.testing.assert_allclose(_core.combine(arr, "wvg", weights=w), expected)
+    np.testing.assert_allclose(_core.combine(arr, "mean", weights=w), expected)
+    np.testing.assert_allclose(ndcombine(arr, combine="mean", weight=w), expected)
 
 
-def test_weighted_average_wavg_alias_is_rejected():
+def test_removed_weighted_average_aliases_are_rejected():
     arr = np.ones((3, 2, 2), dtype=np.float32)
     arr[0] *= 10
     arr[1] *= 20
@@ -1046,11 +1057,17 @@ def test_weighted_average_wavg_alias_is_rejected():
     w = np.array([1.0, 1.0, 2.0])
 
     with pytest.raises(ValueError, match="unknown combine method"):
-        _core.combine(arr, "wavg", weights=w)
+        _core.combine(arr, "weighted_average", weights=w)
     with pytest.raises(ValueError, match="unknown combine method"):
-        ndcombine(arr, combine="wavg", weight=w)
+        _core.combine(arr, "wvg", weights=w)
+    with pytest.raises(ValueError, match="weight.*mean"):
+        _core.combine(arr, "median", weights=w)
+    with pytest.raises(ValueError, match="weight.*mean"):
+        ndcombine(arr, combine="weighted_average", weight=w)
+    with pytest.raises(ValueError, match="weight.*mean"):
+        ndcombine(arr, combine="median", weight=w)
     with pytest.raises(ValueError, match="unknown combine method"):
-        imc.Combiner(arr).combine("wavg", weight=w)
+        imc.Combiner(arr).combine("weighted_average")
 
 
 def test_float64():

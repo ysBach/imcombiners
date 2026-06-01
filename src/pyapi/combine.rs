@@ -6,13 +6,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
 use crate::kernel::combine::{
-    combine_axis0, lmedian_1d as k_lmedian_1d, lmedian_axis0_ord, max_1d as k_max_1d,
-    mean_1d as k_mean_1d, median_1d as k_median_1d, min_1d as k_min_1d,
-    percentiles_1d as k_percentiles_1d, percentiles_axis0, sum_1d as k_sum_1d,
-    variance_1d as k_variance_1d, variance_mean_1d as k_variance_mean_1d, variance_mean_axis0,
-    weighted_average_1d as k_weighted_average_1d, CombineKind,
+    combine_axis0, lmedian_axis0_ord, percentiles_axis0, variance_mean_axis0, CombineKind,
 };
-use crate::kernel::utils::Float;
 
 use super::support::dispatch_combine;
 
@@ -25,16 +20,7 @@ pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(maximum, m)?)?;
     m.add_function(wrap_pyfunction!(variance, m)?)?;
     m.add_function(wrap_pyfunction!(percentiles, m)?)?;
-    m.add_function(wrap_pyfunction!(weighted_average, m)?)?;
-    m.add_function(wrap_pyfunction!(mean_1d, m)?)?;
-    m.add_function(wrap_pyfunction!(median_1d, m)?)?;
-    m.add_function(wrap_pyfunction!(lmedian_1d, m)?)?;
-    m.add_function(wrap_pyfunction!(sum_1d, m)?)?;
-    m.add_function(wrap_pyfunction!(min_1d, m)?)?;
-    m.add_function(wrap_pyfunction!(max_1d, m)?)?;
-    m.add_function(wrap_pyfunction!(variance_1d, m)?)?;
-    m.add_function(wrap_pyfunction!(percentiles_1d, m)?)?;
-    m.add_function(wrap_pyfunction!(weighted_average_1d, m)?)?;
+    m.add_function(wrap_pyfunction!(nanaverage, m)?)?;
     // Compat shim with string dispatch (used by IRAF-style `ndcombine`).
     m.add_function(wrap_pyfunction!(combine, m)?)?;
     Ok(())
@@ -45,7 +31,6 @@ pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 macro_rules! simple_combine {
     ($name:ident, $kind:expr) => {
         #[pyfunction]
-        #[pyo3(signature = (arr))]
         fn $name<'py>(py: Python<'py>, arr: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
             dispatch_combine(
                 py,
@@ -118,7 +103,6 @@ fn percentiles<'py>(
 }
 
 #[pyfunction]
-#[pyo3(signature = (arr))]
 fn lmedian<'py>(py: Python<'py>, arr: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
     if let Ok(a) = arr.cast::<PyArray3<u8>>() {
         let out = lmedian_axis0_ord::<u8>(&a.readonly().as_array());
@@ -142,136 +126,9 @@ fn lmedian<'py>(py: Python<'py>, arr: &Bound<'py, PyAny>) -> PyResult<Bound<'py,
     }
 }
 
-macro_rules! simple_combine_1d {
-    ($name:ident, $kernel:expr) => {
-        #[pyfunction]
-        #[pyo3(signature = (values))]
-        fn $name(values: &Bound<'_, PyAny>) -> PyResult<f64> {
-            if let Ok(a) = values.cast::<numpy::PyArray1<f32>>() {
-                let a = a.readonly();
-                let values = a.as_slice().unwrap();
-                validate_values_len(values.len())?;
-                Ok($kernel(values).to_f64())
-            } else if let Ok(a) = values.cast::<numpy::PyArray1<f64>>() {
-                let a = a.readonly();
-                let values = a.as_slice().unwrap();
-                validate_values_len(values.len())?;
-                Ok($kernel(values).to_f64())
-            } else {
-                Err(pyo3::exceptions::PyTypeError::new_err(
-                    "values must be a 1-D float32 or float64 NumPy array",
-                ))
-            }
-        }
-    };
-}
-
-simple_combine_1d!(mean_1d, k_mean_1d);
-simple_combine_1d!(median_1d, k_median_1d);
-simple_combine_1d!(lmedian_1d, k_lmedian_1d);
-simple_combine_1d!(sum_1d, k_sum_1d);
-simple_combine_1d!(min_1d, k_min_1d);
-simple_combine_1d!(max_1d, k_max_1d);
-
-#[pyfunction]
-#[pyo3(signature = (values, *, ddof = 0, return_mean = false))]
-fn variance_1d<'py>(
-    py: Python<'py>,
-    values: &Bound<'py, PyAny>,
-    ddof: usize,
-    return_mean: bool,
-) -> PyResult<Bound<'py, PyAny>> {
-    if let Ok(a) = values.cast::<numpy::PyArray1<f32>>() {
-        let a = a.readonly();
-        let values = a.as_slice().unwrap();
-        validate_values_len(values.len())?;
-        if return_mean {
-            let (var, mean) = k_variance_mean_1d(values, ddof);
-            Ok(PyTuple::new(py, [var.to_f64(), mean.to_f64()])
-                .unwrap()
-                .into_any())
-        } else {
-            Ok(k_variance_1d(values, ddof)
-                .to_f64()
-                .into_pyobject(py)?
-                .into_any())
-        }
-    } else if let Ok(a) = values.cast::<numpy::PyArray1<f64>>() {
-        let a = a.readonly();
-        let values = a.as_slice().unwrap();
-        validate_values_len(values.len())?;
-        if return_mean {
-            let (var, mean) = k_variance_mean_1d(values, ddof);
-            Ok(PyTuple::new(py, [var.to_f64(), mean.to_f64()])
-                .unwrap()
-                .into_any())
-        } else {
-            Ok(k_variance_1d(values, ddof)
-                .to_f64()
-                .into_pyobject(py)?
-                .into_any())
-        }
-    } else {
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "values must be a 1-D float32 or float64 NumPy array",
-        ))
-    }
-}
-
-#[pyfunction]
-#[pyo3(signature = (values, q))]
-fn percentiles_1d<'py>(
-    py: Python<'py>,
-    values: &Bound<'py, PyAny>,
-    q: PyReadonlyArray1<'py, f64>,
-) -> PyResult<Bound<'py, PyAny>> {
-    let qs = q.as_slice().unwrap();
-    if let Ok(a) = values.cast::<numpy::PyArray1<f32>>() {
-        let a = a.readonly();
-        let values = a.as_slice().unwrap();
-        validate_values_len(values.len())?;
-        Ok(k_percentiles_1d(values, qs).into_pyarray(py).into_any())
-    } else if let Ok(a) = values.cast::<numpy::PyArray1<f64>>() {
-        let a = a.readonly();
-        let values = a.as_slice().unwrap();
-        validate_values_len(values.len())?;
-        Ok(k_percentiles_1d(values, qs).into_pyarray(py).into_any())
-    } else {
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "values must be a 1-D float32 or float64 NumPy array",
-        ))
-    }
-}
-
-#[pyfunction]
-#[pyo3(signature = (values, weights))]
-fn weighted_average_1d(
-    values: &Bound<'_, PyAny>,
-    weights: PyReadonlyArray1<'_, f64>,
-) -> PyResult<f64> {
-    let weights = weights.as_slice().unwrap();
-    if let Ok(a) = values.cast::<numpy::PyArray1<f32>>() {
-        let a = a.readonly();
-        let values = a.as_slice().unwrap();
-        validate_values_len(values.len())?;
-        validate_weights_len_1d(values.len(), weights.len())?;
-        Ok(k_weighted_average_1d(values, weights).to_f64())
-    } else if let Ok(a) = values.cast::<numpy::PyArray1<f64>>() {
-        let a = a.readonly();
-        let values = a.as_slice().unwrap();
-        validate_values_len(values.len())?;
-        validate_weights_len_1d(values.len(), weights.len())?;
-        Ok(k_weighted_average_1d(values, weights).to_f64())
-    } else {
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "values must be a 1-D float32 or float64 NumPy array",
-        ))
-    }
-}
-
 #[pyfunction]
 #[pyo3(signature = (arr, weights, *, validate = true))]
-fn weighted_average<'py>(
+fn nanaverage<'py>(
     py: Python<'py>,
     arr: &Bound<'py, PyAny>,
     weights: PyReadonlyArray1<'py, f64>,
@@ -284,8 +141,8 @@ fn weighted_average<'py>(
     dispatch_combine(
         py,
         arr,
-        |v| combine_axis0::<f32>(&v, CombineKind::WeightedAverage, Some(&w), 0),
-        |v| combine_axis0::<f64>(&v, CombineKind::WeightedAverage, Some(&w), 0),
+        |v| combine_axis0::<f32>(&v, CombineKind::NanAverage, Some(&w), 0),
+        |v| combine_axis0::<f64>(&v, CombineKind::NanAverage, Some(&w), 0),
     )
 }
 
@@ -301,15 +158,19 @@ fn combine<'py>(
     ddof: usize,
     validate: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let kind = CombineKind::parse(method)
+    let mut kind = CombineKind::parse(method)
         .ok_or_else(|| PyValueError::new_err(format!("unknown combine method: {method}")))?;
     let w_vec: Option<Vec<f64>> = weights.map(|w| w.as_slice().unwrap().to_vec());
-    if validate && matches!(kind, CombineKind::WeightedAverage) {
-        let weights_len = w_vec
-            .as_ref()
-            .ok_or_else(|| PyValueError::new_err("weighted average requires weights"))?
-            .len();
-        validate_weights_len(arr, weights_len)?;
+    if let Some(w) = w_vec.as_ref() {
+        if !matches!(kind, CombineKind::Mean) {
+            return Err(PyValueError::new_err(
+                "weights can only be used with mean combine",
+            ));
+        }
+        kind = CombineKind::NanAverage;
+        if validate {
+            validate_weights_len(arr, w.len())?;
+        }
     }
     dispatch_combine(
         py,
@@ -341,25 +202,6 @@ fn validate_weights_len(arr: &Bound<'_, PyAny>, weights_len: usize) -> PyResult<
     if weights_len != n {
         return Err(PyValueError::new_err(format!(
             "weights length must match stack size N={n}"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_values_len(values_len: usize) -> PyResult<()> {
-    if values_len == 0 {
-        Err(PyValueError::new_err(
-            "values must contain at least one sample",
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-fn validate_weights_len_1d(values_len: usize, weights_len: usize) -> PyResult<()> {
-    if weights_len != values_len {
-        return Err(PyValueError::new_err(format!(
-            "weights length must match values length N={values_len}"
         )));
     }
     Ok(())

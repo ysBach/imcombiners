@@ -12,7 +12,8 @@ Inputs with more than 3 dimensions are flattened to ``(N, prod(spatial), 1)``
 internally; outputs are reshaped back to match the input trailing dimensions.
 Accepted public dtypes are ``uint8``, ``uint16``, ``int16``, ``int32``,
 ``float32``, and ``float64``. Other dtypes, including ``int64`` and
-``float128``, are not silently cast.
+``float128``, are not silently cast. Pure stack reductions delegate to
+``reducers`` with finite-only semantics: both ``NaN`` and ``inf`` are skipped.
 Combine kernels return arrays of shape ``(*spatial,)``. Rejection kernels
 return the 6-tuple ``(mask_rej, std, low, upp, nit, output_flags)``.
 `mask_rej` has shape ``(N, *spatial)``. `low`, `upp`, `nit`, `output_flags`, and
@@ -29,9 +30,8 @@ where growth added at least one rejected sample.
 
 from __future__ import annotations
 
-import operator
-
 import numpy as np
+import reducers as rd
 
 from . import _core, _doc
 from ._typing import RejectionResult
@@ -43,35 +43,9 @@ from ._validation import (
     validate_weights,
 )
 
-_LMEDIAN_1D_DTYPES = (
-    np.uint8,
-    np.uint16,
-    np.int16,
-    np.int32,
-    np.float32,
-    np.float64,
-)
-
 __all__ = [
-    # Combine
-    "mean",
-    "median",
-    "lmedian",
-    "summation",
-    "minimum",
-    "maximum",
-    "variance",
-    "percentiles",
-    "weighted_average",
-    "mean_1d",
-    "median_1d",
-    "lmedian_1d",
-    "sum_1d",
-    "min_1d",
-    "max_1d",
-    "var_1d",
-    "percentiles_1d",
-    "wvg_1d",
+    # Weighted combine
+    "nanaverage",
     # Reject
     "sigclip",
     "sigclip_1d",
@@ -100,101 +74,7 @@ __all__ = [
     "pclip_combine",
     "pclip_combine_1d",
     "grow_mask",
-    # Parallel controls
-    "get_rayon_num_threads",
-    "set_rayon_num_threads",
-    "get_parallel_threshold",
-    "set_parallel_threshold",
-    "get_minmax_1d_parallel_threshold",
-    "set_minmax_1d_parallel_threshold",
 ]
-
-
-def get_rayon_num_threads() -> int:
-    """Return the size of Rayon global worker pool.
-
-    Calling this may initialize Rayon. Set the thread count with
-    `RAYON_NUM_THREADS` before starting Python, or call
-    `set_rayon_num_threads()` before any combine/rejection kernel.
-    """
-    return int(_core.get_rayon_num_threads())
-
-
-def set_rayon_num_threads(num_threads: int) -> None:
-    """Set the Rayon global worker-pool size.
-
-    Parameters
-    ----------
-    num_threads : int
-        Positive number of Rayon worker threads. This must be called before any
-        Rayon use in the current Python process. If Rayon has already been
-        initialized, a `RuntimeError` is raised.
-    """
-    try:
-        num_threads = operator.index(num_threads)
-    except TypeError as exc:
-        raise TypeError("Rayon thread count must be an integer") from exc
-    if num_threads <= 0:
-        raise ValueError("Rayon thread count must be positive")
-    _core.set_rayon_num_threads(num_threads)
-
-
-def get_parallel_threshold() -> int:
-    """Return the output-element threshold where kernels switch to Rayon.
-
-    The threshold is compared with ``np.prod(arr.shape[1:])`` after any
-    internal flattening of trailing axes. Below this threshold, kernels use a
-    serial loop to avoid Rayon overhead; at or above it, kernels use Rayon over
-    output elements.
-    """
-    return int(_core.get_parallel_threshold())
-
-
-def set_parallel_threshold(threshold: int) -> None:
-    """Set the output-element threshold where kernels switch to Rayon.
-
-    Parameters
-    ----------
-    threshold : int
-        Positive output-element count. For a stack shaped ``(N, H, W)``, this
-        is compared with ``H * W``. For arbitrary N-D stacks, this is compared
-        with ``np.prod(arr.shape[1:])``.
-    """
-    try:
-        threshold = operator.index(threshold)
-    except TypeError as exc:
-        raise TypeError("parallel threshold must be an integer") from exc
-    if threshold <= 0:
-        raise ValueError("parallel threshold must be positive")
-    _core.set_parallel_threshold(threshold)
-
-
-def get_minmax_1d_parallel_threshold() -> int:
-    """Return the vector length where 1-D min/max switch to Rayon.
-
-    This threshold is compared with ``values.size`` for `min_1d()` and
-    `max_1d()`. It is independent of `get_parallel_threshold()`, which controls
-    stack/rejection parallelism over output elements.
-    """
-    return int(_core.get_minmax_1d_parallel_threshold())
-
-
-def set_minmax_1d_parallel_threshold(threshold: int) -> None:
-    """Set the vector length where 1-D min/max switch to Rayon.
-
-    Parameters
-    ----------
-    threshold : int
-        Positive vector length. Vectors shorter than this use a serial scan;
-        vectors at or above it use Rayon chunk reductions.
-    """
-    try:
-        threshold = operator.index(threshold)
-    except TypeError as exc:
-        raise TypeError("1-D min/max parallel threshold must be an integer") from exc
-    if threshold <= 0:
-        raise ValueError("1-D min/max parallel threshold must be positive")
-    _core.set_minmax_1d_parallel_threshold(threshold)
 
 
 def grow_mask(mask: np.ndarray, grow: float, *, validate: bool = True) -> np.ndarray:
@@ -270,74 +150,95 @@ def _grow_rejection_mask_only(
 # ---- combine ------------------------------------------------------------------------
 
 
-def mean(arr: np.ndarray, *, validate: bool = True) -> np.ndarray:
-    """Return the NaN-aware mean along the stack axis."""
+_STACK_FUNCS = {
+    "mean": rd.nanmean,
+    "average": rd.nanmean,
+    "avg": rd.nanmean,
+    "median": rd.nanmedian,
+    "med": rd.nanmedian,
+    "lmedian": rd.lmedian,
+    "lmed": rd.lmedian,
+    "sum": rd.nansum,
+    "min": rd.nanmin,
+    "max": rd.nanmax,
+    "variance": rd.nanvar,
+    "var": rd.nanvar,
+}
+
+
+def _stack(
+    arr: np.ndarray,
+    fun,
+    *,
+    validate: bool = True,
+    ignore_inf: bool = True,
+    **kwargs,
+) -> np.ndarray:
+    """Return a finite-only axis-0 stack reduction using a `reducers` function."""
     trailing = arr.shape[1:]
-    if validate:
-        arr = validate_stack(arr)
-    return _core.mean(arr).reshape(trailing)
+    dtype = np.asarray(arr).dtype
 
+    if fun is rd.lmedian:
+        if validate:
+            arr = validate_lmedian_stack(arr)
+        return _core.lmedian(arr).reshape(trailing)
 
-def median(arr: np.ndarray, *, validate: bool = True) -> np.ndarray:
-    """Return the NaN-aware median along the stack axis."""
-    trailing = arr.shape[1:]
-    if validate:
-        arr = validate_stack(arr)
-    return _core.median(arr).reshape(trailing)
+    if dtype in (np.dtype(np.float32), np.dtype(np.float64)):
+        if fun is rd.nanmedian:
+            # Keep median/lmedian stack reductions on the Rust adapter path:
+            # current reducers axis median can be slower than imc's former
+            # image-stack loop for shallow stacks, so the fix belongs in
+            # reducers::axis rather than in Python dispatch fan-out here.
+            if validate:
+                arr = validate_stack(arr)
+            return _core.median(arr).reshape(trailing)
+        if fun is rd.nanvar:
+            if validate:
+                arr = validate_stack(arr)
+            return _core.variance(arr, ddof=int(kwargs.get("ddof", 0))).reshape(
+                trailing
+            )
 
-
-def lmedian(arr: np.ndarray, *, validate: bool = True) -> np.ndarray:
-    """IRAF-style lower median along the stack axis."""
-    trailing = arr.shape[1:]
     if validate:
         arr = validate_lmedian_stack(arr)
-    return _core.lmedian(arr).reshape(trailing)
+        validate = False
+    return fun(
+        arr,
+        axis=0,
+        ignore_inf=ignore_inf,
+        validate=validate,
+        **kwargs,
+    ).reshape(trailing)
 
 
-def summation(arr: np.ndarray, *, validate: bool = True) -> np.ndarray:
-    """Return the NaN-aware sum along the stack axis."""
-    trailing = arr.shape[1:]
-    if validate:
-        arr = validate_stack(arr)
-    return _core.summation(arr).reshape(trailing)
-
-
-def minimum(arr: np.ndarray, *, validate: bool = True) -> np.ndarray:
-    """Return the NaN-aware minimum along the stack axis."""
-    trailing = arr.shape[1:]
-    if validate:
-        arr = validate_stack(arr)
-    return _core.minimum(arr).reshape(trailing)
-
-
-def maximum(arr: np.ndarray, *, validate: bool = True) -> np.ndarray:
-    """Return the NaN-aware maximum along the stack axis."""
-    trailing = arr.shape[1:]
-    if validate:
-        arr = validate_stack(arr)
-    return _core.maximum(arr).reshape(trailing)
-
-
-def variance(
+def _variance_stack(
     arr: np.ndarray,
     *,
     ddof: int = 0,
     return_mean: bool = False,
     validate: bool = True,
 ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-    """Return the NaN-aware variance along the stack axis.
-
-    If `return_mean` is `True`, return ``(variance, mean)`` from one Rust
-    accumulation pass.
-    """
-    trailing = arr.shape[1:]
-    if validate:
-        arr = validate_stack(arr)
-    result = _core.variance(arr, ddof=int(ddof), return_mean=bool(return_mean))
+    """Return NaN-aware variance along the stack axis for imc internals."""
     if return_mean:
-        var, mean = result
+        trailing = arr.shape[1:]
+        if np.asarray(arr).dtype in (np.dtype(np.float32), np.dtype(np.float64)):
+            if validate:
+                arr = validate_stack(arr)
+            var, mean = _core.variance(arr, ddof=int(ddof), return_mean=True)
+            return var.reshape(trailing), mean.reshape(trailing)
+        if validate:
+            arr = validate_lmedian_stack(arr)
+            validate = False
+        var, mean = rd.nanvar(
+            arr,
+            axis=0,
+            ddof=int(ddof),
+            return_mean=True,
+            ignore_inf=True,
+            validate=validate,
+        )
         return var.reshape(trailing), mean.reshape(trailing)
-    return result.reshape(trailing)
+    return _stack(arr, rd.nanvar, ddof=int(ddof), validate=validate)
 
 
 def _prepare_percentile_q(q: object) -> tuple[np.ndarray, bool]:
@@ -353,62 +254,68 @@ def _prepare_percentile_q(q: object) -> tuple[np.ndarray, bool]:
     return np.ascontiguousarray(q_arr), scalar
 
 
-def percentiles(
+def _percentiles_stack(
     arr: np.ndarray,
     q: object,
     *,
     validate: bool = True,
 ) -> np.ndarray:
-    """Return NaN-aware percentiles along the stack axis.
-
-    `q` may be a scalar or a 1-D sequence of percentile positions in
-    ``[0, 100]``. Interpolation matches NumPy's default linear method.
-    """
+    """Return NaN-aware percentiles along the stack axis for imc internals."""
     trailing = arr.shape[1:]
     q_arr, scalar = _prepare_percentile_q(q)
+    if np.asarray(arr).dtype in (np.dtype(np.float32), np.dtype(np.float64)):
+        if validate:
+            arr = validate_stack(arr)
+        result = _core.percentiles(arr, q_arr)
+        if scalar:
+            return result[..., 0].reshape(trailing)
+        return np.moveaxis(result, -1, 0).reshape((q_arr.size, *trailing))
     if validate:
-        arr = validate_stack(arr)
-    result = _core.percentiles(arr, q_arr)
+        arr = validate_lmedian_stack(arr)
+        validate = False
+    result = rd.nanpercentile(
+        arr,
+        q_arr,
+        axis=0,
+        ignore_inf=True,
+        validate=validate,
+    )
     if scalar:
-        return result[..., 0].reshape(trailing)
-    return np.moveaxis(result, -1, 0).reshape((q_arr.size, *trailing))
+        return result[0].reshape(trailing)
+    return result.reshape((q_arr.size, *trailing))
 
 
-def weighted_average(
-    arr: np.ndarray, weights: np.ndarray, *, validate: bool = True
+def nanaverage(
+    arr: np.ndarray,
+    weights: np.ndarray,
+    *,
+    validate: bool = True,
 ) -> np.ndarray:
     """Return the NaN-aware weighted average along the stack axis."""
     trailing = arr.shape[1:]
     if validate:
-        arr = validate_stack(arr)
+        arr = validate_lmedian_stack(arr)
         weights = validate_weights(weights, arr.shape[0])
+        validate = False
     else:
         weights = np.ascontiguousarray(weights, dtype=np.float64).reshape(-1)
-    return _core.weighted_average(arr, weights, validate=validate).reshape(trailing)
+    return rd.nanaverage(
+        arr,
+        weights=weights,
+        axis=0,
+        ignore_inf=True,
+        validate=validate,
+    ).reshape(trailing)
 
 
-def _prepare_1d_values(
-    values: np.ndarray, *, validate: bool, preserve_integer: bool = False
-) -> np.ndarray:
-    """Validate the public 1-D contract and return contiguous Rust input.
-
-    Most 1-D kernels share the stack kernels' floating-workspace promotion.
-    `lmedian_1d` is the exception because its integer lower-median path must
-    preserve the original dtype to match the 2-D image-stack behavior.
-    """
-    if validate and not preserve_integer:
+def _prepare_1d_values(values: np.ndarray, *, validate: bool) -> np.ndarray:
+    """Validate the public 1-D rejection contract and return Rust input."""
+    if validate:
         return validate_values_1d(values)
 
     values = np.asarray(values)
     if values.ndim != 1:
         raise ValueError(f"values must be 1-D; got shape {values.shape}")
-    if preserve_integer and values.shape[0] == 0:
-        raise ValueError("values must contain at least one sample")
-    if preserve_integer and validate and values.dtype not in _LMEDIAN_1D_DTYPES:
-        raise TypeError(
-            "values must be uint8, uint16, int16, int32, float32, "
-            f"or float64; got {values.dtype}"
-        )
     return np.ascontiguousarray(values)
 
 
@@ -441,98 +348,6 @@ def _rejection_1d_result(
         _scalar(nit),
         _scalar(output_flags),
     )
-
-
-def mean_1d(values: np.ndarray, *, validate: bool = True) -> object:
-    """Return the NaN-aware mean of a 1-D value vector."""
-    if not validate:
-        return _core.mean_1d(values)
-    values = _prepare_1d_values(values, validate=validate)
-    return _core.mean_1d(values)
-
-
-def median_1d(values: np.ndarray, *, validate: bool = True) -> object:
-    """Return the NaN-aware median of a 1-D value vector."""
-    if not validate:
-        return _core.median_1d(values)
-    values = _prepare_1d_values(values, validate=validate)
-    return _core.median_1d(values)
-
-
-def lmedian_1d(values: np.ndarray, *, validate: bool = True) -> object:
-    """Return the NaN-aware lower median of a 1-D value vector."""
-    values = _prepare_1d_values(values, validate=validate, preserve_integer=True)
-    if values.dtype in (np.uint8, np.uint16, np.int16, np.int32):
-        return _core.lmedian(values.reshape(-1, 1, 1))[0, 0]
-    return _core.lmedian_1d(values)
-
-
-def sum_1d(values: np.ndarray, *, validate: bool = True) -> object:
-    """Return the NaN-aware sum of a 1-D value vector."""
-    if not validate:
-        return _core.sum_1d(values)
-    values = _prepare_1d_values(values, validate=validate)
-    return _core.sum_1d(values)
-
-
-def min_1d(values: np.ndarray, *, validate: bool = True) -> object:
-    """Return the NaN-aware minimum of a 1-D value vector."""
-    if not validate:
-        return _core.min_1d(values)
-    values = _prepare_1d_values(values, validate=validate)
-    return _core.min_1d(values)
-
-
-def max_1d(values: np.ndarray, *, validate: bool = True) -> object:
-    """Return the NaN-aware maximum of a 1-D value vector."""
-    if not validate:
-        return _core.max_1d(values)
-    values = _prepare_1d_values(values, validate=validate)
-    return _core.max_1d(values)
-
-
-def var_1d(
-    values: np.ndarray,
-    *,
-    ddof: int = 0,
-    return_mean: bool = False,
-    validate: bool = True,
-) -> object:
-    """Return the NaN-aware variance of a 1-D value vector.
-
-    If `return_mean` is `True`, return ``(variance, mean)`` from one Rust
-    accumulation pass.
-    """
-    if not validate:
-        return _core.variance_1d(
-            values, ddof=int(ddof), return_mean=bool(return_mean)
-        )
-    values = _prepare_1d_values(values, validate=validate)
-    return _core.variance_1d(values, ddof=int(ddof), return_mean=bool(return_mean))
-
-
-def percentiles_1d(values: np.ndarray, q: object, *, validate: bool = True) -> object:
-    """Return NaN-aware percentiles of a 1-D value vector.
-
-    `q` may be a scalar or a 1-D sequence of percentile positions in
-    ``[0, 100]``. Interpolation matches NumPy's default linear method.
-    """
-    q_arr, scalar = _prepare_percentile_q(q)
-    if not validate:
-        result = _core.percentiles_1d(values, q_arr)
-    else:
-        values = _prepare_1d_values(values, validate=validate)
-        result = _core.percentiles_1d(values, q_arr)
-    if scalar:
-        return result[0]
-    return result
-
-
-def wvg_1d(values: np.ndarray, weights: np.ndarray, *, validate: bool = True) -> object:
-    """Return the NaN-aware weighted average of a 1-D value vector."""
-    values = _prepare_1d_values(values, validate=validate)
-    weights = validate_weights(weights, values.shape[0])
-    return _core.weighted_average_1d(values, weights)
 
 
 # ---- reject -------------------------------------------------------------------------

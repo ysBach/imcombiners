@@ -11,13 +11,11 @@
 use pyo3::prelude::*;
 
 pub mod combine;
-pub mod parallel;
 pub mod reject;
 mod support;
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     combine::register(m)?;
-    parallel::register(m)?;
     reject::register(m)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())

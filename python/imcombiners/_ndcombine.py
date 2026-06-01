@@ -74,29 +74,6 @@ def _apply_zero_scale(
     return out if copied else arr.copy()
 
 
-def _is_pure_lmedian_call(
-    combine: str,
-    reject: str | None,
-    mask: np.ndarray | None,
-    thresholds: tuple[float, float] | list[float] | None,
-    zero: PlaneVectorLike,
-    scale: PlaneVectorLike,
-    weight: np.ndarray | None,
-    grow: float | None,
-) -> bool:
-    """Return `True` when lower median can preserve integer dtype."""
-    return (
-        str(combine).lower() in ("lmedian", "lmed")
-        and reject is None
-        and mask is None
-        and thresholds is None
-        and zero is None
-        and scale is None
-        and weight is None
-        and grow is None
-    )
-
-
 def _validate_grow_value(grow: float | None, validate: bool) -> float | None:
     """Validate an optional grow radius at the public wrapper boundary."""
     if grow is None or not validate:
@@ -284,8 +261,7 @@ def ndcombine(
     combine : str, optional
         Combine method. Supported aliases are `"mean"`, `"average"`, `"avg"`,
         `"median"`, `"med"`, `"lmedian"`, `"lmed"`, `"sum"`, `"min"`,
-        `"max"`, `"variance"`, `"var"`,
-        `"weighted_average"` and `"wvg"`.
+        `"max"`, `"variance"`, and `"var"`.
     reject : {"minmax", "pclip", "sigclip", "ccdclip"} or None, optional
         Rejection algorithm to apply before combining. `None` disables
         rejection.
@@ -346,7 +322,7 @@ def ndcombine(
         statistic alias such as `"mean_sc"` or `"med_sc"`. Supported keys are
         `sigma`, `maxiters`, `cenfunc`, `clip_cen`, and `ddof`.
     weight : ndarray, shape (N,), optional
-        Per-plane weights required by weighted-average combine.
+        Optional per-plane weights for mean/average combine.
     revert_on_nkeep : bool, optional
         If `True`, an iteration that would leave fewer than `nkeep` usable
         samples at a pixel is reverted in full for that pixel. Input masks,
@@ -409,12 +385,21 @@ def ndcombine(
     diagnostic_level = normalize_diagnostics(diagnostics, full)
     want_diagnostics = diagnostic_level is not None
     want_sample_flags = diagnostic_level == "full"
+    cb = combine.lower()
 
-    if _is_pure_lmedian_call(
-        combine, reject, mask, thresholds, zero, scale, weight, grow
+    if (
+        reject is None
+        and mask is None
+        and thresholds is None
+        and zero is None
+        and scale is None
+        and weight is None
+        and grow is None
+        and cb in kernels._STACK_FUNCS
     ):
-        # kernels.lmedian already reshapes its output to trailing dimensions.
-        out = kernels.lmedian(arr, validate=validate)
+        fun = kernels._STACK_FUNCS[cb]
+        kwargs = {"ddof": ddof} if fun is kernels.rd.nanvar else {}
+        out = kernels._stack(arr, fun, validate=validate, **kwargs)
         if want_sample_flags:
             sample_flags = sample_flags_array(np.asarray(arr)).reshape(orig_shape)
             return out, None, None, None, None, None, None, None, sample_flags
@@ -457,7 +442,6 @@ def ndcombine(
     mask_rej = low = upp = nit = output_flags = std = sample_flags = None
     sample_mask_rej = None
     sample_restored_flags = None
-    cb = combine.lower()
     if reject is not None:
         rj = reject.lower()
         if rj == "minmax":
@@ -470,7 +454,11 @@ def ndcombine(
                     validate=validate,
                 )
             else:
-                if cb in ("mean", "average", "avg", "median", "med") and grow is None:
+                if (
+                    cb in ("mean", "average", "avg", "median", "med")
+                    and grow is None
+                    and weight is None
+                ):
                     return kernels.minmax_combine(
                         arr_zs,
                         mask=mask_pre,
@@ -498,7 +486,11 @@ def ndcombine(
                     validate=validate,
                 )
             else:
-                if cb in ("mean", "average", "avg", "median", "med") and grow is None:
+                if (
+                    cb in ("mean", "average", "avg", "median", "med")
+                    and grow is None
+                    and weight is None
+                ):
                     return kernels.pclip_combine(
                         arr_zs,
                         mask=mask_pre,
@@ -547,7 +539,11 @@ def ndcombine(
                         validate=validate,
                     )
             else:
-                if cb in ("mean", "average", "avg", "median", "med") and grow is None:
+                if (
+                    cb in ("mean", "average", "avg", "median", "med")
+                    and grow is None
+                    and weight is None
+                ):
                     return kernels.sigclip_combine(
                         arr_zs,
                         mask=mask_pre,
@@ -582,6 +578,7 @@ def ndcombine(
                 not want_diagnostics
                 and cb in ("mean", "average", "avg", "median", "med")
                 and grow is None
+                and weight is None
             ):
                 return kernels.ccdclip_combine(
                     arr_zs,
@@ -696,30 +693,20 @@ def ndcombine(
     else:
         arr_eff = arr_zs
 
-    if cb in ("mean", "average", "avg"):
-        out = kernels.mean(arr_eff, validate=validate)
-    elif cb in ("median", "med"):
-        out = kernels.median(arr_eff, validate=validate)
-    elif cb in ("lmedian", "lmed"):
-        out = kernels.lmedian(arr_eff, validate=validate)
-    elif cb == "sum":
-        out = kernels.summation(arr_eff, validate=validate)
-    elif cb == "min":
-        out = kernels.minimum(arr_eff, validate=validate)
-    elif cb == "max":
-        out = kernels.maximum(arr_eff, validate=validate)
-    elif cb in ("variance", "var"):
-        out = kernels.variance(arr_eff, ddof=ddof, validate=validate)
-    elif cb in ("weighted_average", "wvg"):
-        if weight is None:
-            raise ValueError("weight required for weighted_average combine")
-        out = kernels.weighted_average(
+    if weight is not None:
+        if cb not in ("mean", "average", "avg"):
+            raise ValueError("weight can only be used with mean combine")
+        out = kernels.nanaverage(
             arr_eff,
             validate_weights(weight, arr_eff.shape[0])
             if validate
             else np.asarray(weight, dtype=np.float64),
             validate=validate,
         )
+    elif cb in kernels._STACK_FUNCS:
+        fun = kernels._STACK_FUNCS[cb]
+        kwargs = {"ddof": ddof} if fun is kernels.rd.nanvar else {}
+        out = kernels._stack(arr_eff, fun, validate=validate, **kwargs)
     else:
         raise ValueError(f"unknown combine method: {combine}")
 

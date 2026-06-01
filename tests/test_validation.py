@@ -4,32 +4,43 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import reducers as rd
 from imcombiners import CcdClip, Combiner, kernels, ndcombine, resolve_zero_scale
 from imcombiners._validation import _sigclip_plane_stat
 
 
 def test_kernel_validate_false_matches_checked_path():
     arr = np.arange(12, dtype=np.float32).reshape(3, 2, 2)
+    weights = np.ones(arr.shape[0], dtype=np.float64)
 
-    checked = kernels.mean(arr)
-    unchecked = kernels.mean(arr, validate=False)
+    checked = kernels.nanaverage(arr, weights)
+    unchecked = kernels.nanaverage(arr, weights, validate=False)
 
     np.testing.assert_allclose(unchecked, checked)
+
+
+def test_stack_helper_accepts_reducer_callable_and_preserves_integer_min_dtype():
+    arr = np.arange(24, dtype=np.uint16).reshape(3, 2, 4)
+
+    out = kernels._stack(arr, rd.nanmin)
+
+    assert out.dtype == np.uint16
+    np.testing.assert_array_equal(out, arr.min(axis=0))
 
 
 @pytest.mark.parametrize(
     ("dtype", "out_dtype"),
     [
-        (np.uint8, np.float32),
-        (np.uint16, np.float32),
-        (np.int16, np.float32),
+        (np.uint8, np.float64),
+        (np.uint16, np.float64),
+        (np.int16, np.float64),
         (np.int32, np.float64),
     ],
 )
-def test_kernel_accepts_common_integer_image_dtypes(dtype, out_dtype):
+def test_ndcombine_accepts_common_integer_image_dtypes(dtype, out_dtype):
     arr = np.arange(12, dtype=dtype).reshape(3, 2, 2)
 
-    out = kernels.mean(arr)
+    out = ndcombine(arr, combine="mean")
 
     assert out.dtype == out_dtype
     np.testing.assert_allclose(out, arr.astype(out_dtype).mean(axis=0))
@@ -38,7 +49,7 @@ def test_kernel_accepts_common_integer_image_dtypes(dtype, out_dtype):
 def test_int32_public_path_preserves_values_above_float32_exact_range():
     arr = np.arange(12, dtype=np.int32).reshape(3, 2, 2) + 2**24 + 1
 
-    out = kernels.mean(arr)
+    out = ndcombine(arr, combine="mean")
 
     assert out.dtype == np.float64
     np.testing.assert_allclose(out, arr.astype(np.float64).mean(axis=0))
@@ -49,8 +60,8 @@ def test_ndcombine_accepts_common_integer_image_dtype():
 
     out = ndcombine(arr, combine="median")
 
-    assert out.dtype == np.float32
-    np.testing.assert_allclose(out, np.median(arr.astype(np.float32), axis=0))
+    assert out.dtype == np.float64
+    np.testing.assert_allclose(out, np.median(arr.astype(np.float64), axis=0))
 
 
 def test_ndcombine_accepts_uint16_image_dtype():
@@ -58,19 +69,20 @@ def test_ndcombine_accepts_uint16_image_dtype():
 
     out = ndcombine(arr, combine="mean")
 
-    assert out.dtype == np.float32
-    np.testing.assert_allclose(out, arr.astype(np.float32).mean(axis=0))
+    assert out.dtype == np.float64
+    np.testing.assert_allclose(out, arr.astype(np.float64).mean(axis=0))
 
 
 def test_kernel_validate_false_skips_python_stack_validation(monkeypatch):
     arr = np.arange(12, dtype=np.float32).reshape(3, 2, 2)
+    weights = np.ones(arr.shape[0], dtype=np.float64)
 
     def fail_validation(_arr):
         raise AssertionError("validation should be skipped")
 
     monkeypatch.setattr(kernels, "validate_stack", fail_validation)
 
-    out = kernels.mean(arr, validate=False)
+    out = kernels.nanaverage(arr, weights, validate=False)
 
     np.testing.assert_allclose(out, arr.mean(axis=0))
 
@@ -141,12 +153,12 @@ def test_sigclip_plane_stat_accepts_lower_median_center():
     np.testing.assert_allclose(out, 9.0)
 
 
-def test_kernel_weighted_average_rejects_wrong_weight_length():
+def test_kernel_nanaverage_rejects_wrong_weight_length():
     arr = np.ones((3, 2, 2), dtype=np.float32)
     weights = np.ones(2, dtype=np.float64)
 
     with pytest.raises(ValueError, match="weights length"):
-        kernels.weighted_average(arr, weights)
+        kernels.nanaverage(arr, weights)
 
 
 def test_ndcombine_rejects_wrong_zero_length():
