@@ -9,6 +9,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from benchmarks import _environment  # noqa: E402
+
 
 def _load_benchmark_combine():
     path = Path(__file__).resolve().parents[1] / "benchmarks" / "benchmark_combine.py"
@@ -22,6 +27,24 @@ def _load_benchmark_combine():
 
 
 bench = _load_benchmark_combine()
+
+
+def test_format_environment_markdown_includes_versions_and_kernel():
+    report = _environment.format_environment_markdown(
+        {
+            "Python": "3.13.0",
+            "Kernel/OS": "macOS-26.4.1-arm64",
+            "Machine": "arm64",
+            "Logical CPUs": "12",
+            "numpy": "2.4.6",
+            "bottleneck": "1.6.0",
+        }
+    )
+
+    assert "## Environment" in report
+    assert "| Python | 3.13.0 |" in report
+    assert "| Kernel/OS | macOS-26.4.1-arm64 |" in report
+    assert "| bottleneck | 1.6.0 |" in report
 
 
 @pytest.mark.parametrize(

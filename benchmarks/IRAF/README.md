@@ -164,7 +164,9 @@ output-only `imcombine` calls (72 cases x 3 repeats). The reported time is
 `(single ecl wall time - baseline) / 3`. One-case rows use a separate CL file
 per case with the same batched-repeat approach.
 
-The script prints Markdown to stdout. Pass `--output /tmp/imc-iraf-benchmark.md`
-if you want to preserve a local run artifact. Public benchmark summaries belong
-in `docs/quarto/benchmarks.qmd`; generated local run artifacts are intentionally
+The script prints Markdown to stdout, including an environment table with
+Python, package versions, OS/kernel details, machine type, and logical CPU
+count. Pass `--output /tmp/imc-iraf-benchmark.md` if you want to preserve a
+local run artifact. Public benchmark summaries belong in
+`docs/quarto/benchmarks.qmd`; generated local run artifacts are intentionally
 not tracked.

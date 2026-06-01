@@ -22,11 +22,12 @@ Rows
     Stateful ``Combiner(...).reject(...).combine(...)`` path. This is mainly
     useful for rejection rows because it retains diagnostics and pipeline state.
 ``imc_opt``
-    Optimized lower-level package path for callers that already prepared a
-    contiguous floating workspace and disable validation. Integer stacks follow
-    the same workspace policy as the public API: `uint8`, `uint16`, and `int16`
-    use `float32`; `int32` uses `float64`. Rejection rows use fused output-only
-    kernels when available.
+    Optimized lower-level path for callers that already prepared a contiguous
+    floating workspace and disable validation. Integer stacks follow the same
+    workspace policy as the public API: `uint8`, `uint16`, and `int16` use
+    `float32`; `int32` uses `float64`. Simple generic mean/median rows use the
+    optimized imcombiners stack dispatcher; rejection rows use imcombiners
+    fused output-only kernels when available.
 """
 
 from __future__ import annotations
@@ -42,9 +43,15 @@ from dataclasses import dataclass
 import imcombiners as imc
 import imcombiners.kernels as imck
 import numpy as np
+import reducers as rd
 from astropy import units as u
 from astropy.nddata import CCDData
 from astropy.stats import sigma_clip
+
+try:
+    from benchmarks._environment import format_environment_markdown
+except ModuleNotFoundError:  # pragma: no cover - direct script execution
+    from _environment import format_environment_markdown
 
 try:
     import ccdproc
@@ -214,13 +221,13 @@ def optimized_workspace(stack: np.ndarray) -> np.ndarray:
 def imcombiners_optimized(
     stack_opt: np.ndarray, op: str, mask: np.ndarray | None = None
 ) -> np.ndarray:
-    """Run imc with prepared contiguous workspace and validation disabled."""
+    """Run the optimized direct path with validation disabled."""
     if op == "mean":
         arr = stack_opt if mask is None else np.where(mask, np.nan, stack_opt)
-        return imck.mean(arr, validate=False)
+        return imck._stack(arr, rd.nanmean, validate=False)
     if op == "median":
         arr = stack_opt if mask is None else np.where(mask, np.nan, stack_opt)
-        return imck.median(arr, validate=False)
+        return imck._stack(arr, rd.nanmedian, validate=False)
     if op == "sigclip_mean":
         return imck.sigclip_combine(
             stack_opt,
@@ -580,7 +587,8 @@ def main() -> None:
     print("# imc_chain is the stateful Combiner reject/combine path.")
     print(
         "# imc_opt is a prepared contiguous workspace with validation disabled, "
-        "using fused kernels where available."
+        "using imc stack dispatch for simple reductions and fused imc kernels "
+        "where available."
     )
     print(
         "# Sigma clipping: sigma=(3, 3), maxiters=5, ddof=0, "
@@ -588,6 +596,8 @@ def main() -> None:
     )
     print("# ccdproc Combiner.sigma_clipping uses its public default maxiters=1.")
     print(f"# Masked cases use a random {MASK_FRAC:.0%} pixel mask per frame.")
+    print()
+    print(format_environment_markdown())
 
     all_base: list[CaseResult] = [run_case(c, args) for c in base_cases]
     all_masked: list[CaseResult] = [run_case(c, args) for c in masked_cases]

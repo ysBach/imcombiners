@@ -1,7 +1,7 @@
 """Tune Rayon thread counts for representative imcombiners workloads.
 
 See ``docs/quarto/performance/max-performance.qmd`` for usage guidance,
-threshold notes, and interpretation caveats.
+reducers/imc parallel-policy notes, and interpretation caveats.
 """
 
 from __future__ import annotations
@@ -19,6 +19,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+
+try:
+    from benchmarks._environment import format_environment_markdown
+except ModuleNotFoundError:  # pragma: no cover - direct script execution
+    from _environment import format_environment_markdown
 
 OPS = ("mean", "median", "sigclip_mean", "sigclip_median")
 DTYPES = ("float32", "float64")
@@ -52,7 +57,6 @@ def _json_from_stdout(stdout: str) -> dict[str, float]:
 
 
 _DENSE_SWEEP_MAX = 32
-_PRACTICAL_PARALLEL_THRESHOLD = 10_000
 
 
 def candidate_threads(
@@ -83,16 +87,6 @@ def candidate_threads(
         values.add(value)
         value *= 2
     return sorted(values)
-
-
-def recommended_parallel_threshold(output_elements: int) -> int:
-    """Return a practical production threshold for a parallel recommendation.
-
-    The benchmark forces threshold=1 internally to measure Rayon. User-facing
-    recommendations should keep small workloads serial unless the measured
-    workload is itself smaller than the practical threshold.
-    """
-    return max(1, min(_PRACTICAL_PARALLEL_THRESHOLD, int(output_elements)))
 
 
 def selected_threads(args: argparse.Namespace) -> list[int]:
@@ -170,11 +164,12 @@ def make_stack(n: int, height: int, width: int, dtype: str) -> np.ndarray:
 def run_operation(stack: np.ndarray, op: str) -> np.ndarray:
     """Run one imcombiners operation."""
     import imcombiners.kernels as imck
+    import reducers as rd
 
     if op == "mean":
-        return imck.mean(stack, validate=False)
+        return imck._stack(stack, rd.nanmean, validate=False)
     if op == "median":
-        return imck.median(stack, validate=False)
+        return imck._stack(stack, rd.nanmedian, validate=False)
     if op == "sigclip_mean":
         return imck.sigclip_combine(
             stack,
@@ -242,7 +237,6 @@ def run_candidate(threads: int, args: argparse.Namespace) -> ThreadResult:
     """Run one thread-count candidate in a fresh subprocess."""
     env = os.environ.copy()
     env["RAYON_NUM_THREADS"] = str(threads)
-    env["IMCOMBINERS_PARALLEL_THRESHOLD"] = "1"
     for name in THREAD_ENV_VARS[1:]:
         env[name] = "1"
 
@@ -282,11 +276,9 @@ def run_candidate(threads: int, args: argparse.Namespace) -> ThreadResult:
 
 
 def run_serial_candidate(args: argparse.Namespace) -> ThreadResult:
-    """Run the benchmark workload with the serial kernel path forced."""
-    output_elements = args.height * args.width
+    """Run the benchmark workload with a one-thread Rayon baseline."""
     env = os.environ.copy()
     env["RAYON_NUM_THREADS"] = "1"
-    env["IMCOMBINERS_PARALLEL_THRESHOLD"] = str(output_elements + 1)
     for name in THREAD_ENV_VARS[1:]:
         env[name] = "1"
 
@@ -352,10 +344,6 @@ def print_results(
     )
     fastest = fastest_result(results) if results else None
     best = best_result(results, tie_tolerance=args.tie_tolerance) if results else None
-    output_elements = args.height * args.width
-    measured_parallel_threshold = 1
-    force_serial_threshold = output_elements + 1
-    practical_threshold = recommended_parallel_threshold(output_elements)
     recommend_serial = best is None or (
         serial_result is not None
         and serial_result.median_ms <= best.median_ms * (1.0 + args.tie_tolerance)
@@ -393,7 +381,7 @@ def print_results(
         )
     print()
     if best is not None and fastest is not None:
-        print(f"Fastest observed median: RAYON_NUM_THREADS={fastest.threads}")
+        print(f"Fastest observed parallel median: RAYON_NUM_THREADS={fastest.threads}")
         print(f"Best measured parallel setting: RAYON_NUM_THREADS={best.threads}")
     else:
         print("No parallel thread candidates were measured.")
@@ -405,33 +393,17 @@ def print_results(
     print()
     if recommend_serial:
         print("Recommended measured mode: serial")
-        print("# Copy into your shell before starting Python:")
-        print(f"export IMCOMBINERS_PARALLEL_THRESHOLD={force_serial_threshold}")
-        print(
-            "# RAYON_NUM_THREADS is not used by this serial recommendation "
-            "for this workload."
-        )
-        threshold = force_serial_threshold
+        print("# This benchmark baseline used RAYON_NUM_THREADS=1 for this workload.")
     else:
         print("Recommended measured mode: parallel")
         assert best is not None
         print(f"Recommended RAYON_NUM_THREADS={best.threads}")
         print(
-            f"# parallel candidates were measured with threshold="
-            f"{measured_parallel_threshold} to force Rayon"
-        )
-        print(
-            "# Do not use threshold=1 as a global default; leave the package "
-            "default or tune the threshold separately"
-        )
-        print(
-            "# Practical threshold starting point for this output size: "
-            f"{practical_threshold}"
+            "# Simple reducers follow reducers grain settings; rejection kernels "
+            "use imc's internal rejection-parallel policy."
         )
         print("# You may copy it into your shell before starting Python:")
         print(f"export RAYON_NUM_THREADS={best.threads}")
-        print(f"export IMCOMBINERS_PARALLEL_THRESHOLD={practical_threshold}")
-        threshold = practical_threshold
     print()
     print(
         "# Exact numbers can vary with op, dtype, image count, "
@@ -439,16 +411,9 @@ def print_results(
         "# For example, (5, 64, 128) results in best threads=5 while "
         "(31, 512, 512) can result in 12 on the same machine."
     )
-    print("\n# You may also set/check the threshold inside Python right after import:")
-    print("import imcombiners as imc")
-    if not recommend_serial:
-        print(f"imc.set_rayon_num_threads({best.threads})")
-    if threshold is not None:
-        print(f"imc.set_parallel_threshold({threshold})")
-    if not recommend_serial:
-        print("print(imc.get_rayon_num_threads())")
-    if threshold is not None:
-        print("print(imc.get_parallel_threshold())")
+    print("\n# You may also inspect reducers' active settings inside Python:")
+    print("import reducers as rd")
+    print("print(rd.get_num_threads())")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -556,6 +521,9 @@ def main() -> None:
         f"({args.warmups} warmup + {args.repeats} timed repeat(s) each). "
         "This may take several minutes depending on your machine."
     )
+    print()
+    print(format_environment_markdown())
+    print()
     print(image_count_summary(args))
     print(
         "Exact numbers may vary with operation, dtype, image count, shape, "

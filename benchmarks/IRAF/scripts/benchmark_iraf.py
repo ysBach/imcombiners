@@ -17,6 +17,14 @@ import imcombiners as imc
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT / "benchmarks"))
+
+try:
+    from benchmarks._environment import format_environment_markdown  # noqa: E402
+except ModuleNotFoundError:  # pragma: no cover - direct script execution
+    from _environment import format_environment_markdown  # noqa: E402
+
 SCRIPTS_DIR = ROOT / "scripts"
 DEFAULT_IRAF_ROOT = ROOT
 DEFAULT_ECL = ROOT / "ecl.e"
@@ -723,6 +731,8 @@ def main() -> None:
         f"IRAF baseline mode: `{args.iraf_baseline}`",
         f"Subtracted IRAF baseline: {_fmt_baselines_ms(iraf_baselines)} ms",
         "Validation: output-only `imc` results asserted against IRAF before timing",
+        "",
+        format_environment_markdown(),
         "",
     ]
     if group_rows:
