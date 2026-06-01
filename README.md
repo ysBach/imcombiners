@@ -18,11 +18,14 @@ Tests and benchmark material compare supported paths against IRAF, Astropy/NumPy
 
 
 ## First Look
-The package has four usage modes: **Standard `Combiner().combine()`** approach, compact
-`ndcombine()` wrapper, **Chained `Combiner()`**, and direct kernel calls. Start
-with standard `Combiner` usage for ordinary Python workflows. Use chained
-`Combiner` calls when you need retained diagnostics, `ndcombine()` for compact
-IRAF-like call sites (this function was made in consideration of CLI tools), and direct kernel calls for custom high-throughput layers.
+The package has **four** usage modes:
+
+1. Recommended: **Standard `Combiner().combine()`** approach,
+2. CLI-friendly: compact `ndcombine()` wrapper,
+3. Deep-inspection: **Chained `Combiner()`**, and
+4. Advanced: direct kernel calls.
+
+Start with standard `Combiner` usage for ordinary Python workflows.
 
 ```python
 import numpy as np
@@ -56,15 +59,29 @@ See [docs/quarto/index.qmd](docs/quarto/index.qmd#first-look) for the detailed e
 - 1-D rejection helpers: `imcombiners.kernels` exposes `_1d` functions such as `sigclip_mask_1d`, `pclip_1d`, and `minmax_combine_1d`. Use the companion `reducers` package for standalone fast reductions such as mean, median, percentile, and variance.
 - Pixel rejection: sigma, CCD noise-model, iterative linear, min/max, and IRAF-style percentile clipping. Rejection centers accept mean, median, and lower median (`lmedian`/`lmed`).
 - Pipeline helpers: threshold masking, zero/scale normalization, offset padding, masks, `diagnostics=None|"simple"|"full"`, and output-only fast paths.
-- Performance docs: see [docs/quarto/performance/max-performance.qmd](docs/quarto/performance/max-performance.qmd) and [docs/quarto/performance/image-benchmarks.qmd](docs/quarto/performance/image-benchmarks.qmd).
+- See documentations for details and examples.
 
-## Development Install
+## Install
+
+For Python projects:
 
 ```bash
+uv add imcombiners
+
+# For development:
 # You may activate your Python environment before this, e.g.,
 # source ~/.venvs/your_env/bin/activate
 uv pip install -e ".[dev]"
 ```
+```
+
+For Rust crate use:
+
+```toml
+[dependencies]
+imcombiners = "0.1.1"
+```
+
 
 ## Testing and Benchmarks
 
