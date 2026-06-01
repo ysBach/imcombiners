@@ -17,6 +17,7 @@ pyo3 = { version = "0.28", features = ["abi3-py310"] }
 numpy = "0.28"
 ndarray = { version = "0.16", features = ["rayon"] }
 rayon = "1.10"
+reducers = { path = "../reducers", version = "0.3", default-features = false }
 
 [profile.release]
 opt-level = 3
