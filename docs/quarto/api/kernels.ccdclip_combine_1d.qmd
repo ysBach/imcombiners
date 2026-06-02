@@ -23,4 +23,82 @@ kernels.ccdclip_combine_1d(
 )
 ```
 
-Return a 1-D CCD-clipped mean or median.
+CCD noise-model clipping (1-D output-only variant).
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**values**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N))]{.parameter-annotation}</code>
+
+:   One-dimensional value vector. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Integer inputs are promoted to the package's floating workspace when `validate` is `True`.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Input mask; `True` means already masked. Must have shape ``(N,)``.
+
+<code>[**combine**]{.parameter-name} [:]{.parameter-annotation-sep} [str]{.parameter-annotation}</code>
+
+:   Output combine method evaluated after rejection. Fused combine kernels support `"mean"`, `"average"`, `"avg"`, `"median"`, and `"med"`.
+
+<code>[**sigma**]{.parameter-name} [:]{.parameter-annotation-sep} [float or tuple of float]{.parameter-annotation} [ = ]{.parameter-default-sep} [(3.0, 3.0)]{.parameter-default}</code>
+
+:   User-supplied clipping multiplier, not the measured data spread itself. Values are clipped when their residual from the clipping center exceeds ``sigma * spread``. A scalar applies the same multiplier to both tails; a 2-tuple ``(sigma_lower, sigma_upper)`` clips asymmetrically. Thresholds must be finite and non-negative.
+
+<code>[**maxiters**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [5]{.parameter-default}</code>
+
+:   Maximum number of clipping iterations per pixel.
+
+<code>[**ddof**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [0]{.parameter-default}</code>
+
+:   Delta degrees of freedom for the per-pixel spread estimator.
+
+<code>[**nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Minimum number of unmasked values to preserve at each pixel. An iteration that would drop below this count is reverted in full. The default, `1`, prevents clipping from rejecting every finite sample in a per-output stack. Set `0` only when all samples may be rejected.
+
+<code>[**maxrej**]{.parameter-name} [:]{.parameter-annotation-sep} [int or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Maximum number of values that may be rejected at each pixel. `None` means no limit.
+
+<code>[**cenfunc**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+
+:   Center estimator used each iteration. `lmedian` accepts the alias `lmed` and uses the lower of the two middle samples for even valid counts.
+
+<code>[**clip_cen**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+
+:   Center used when computing the spread for iterative rejection. `None` uses the same center as `cenfunc`; `lmedian` also accepts `lmed`.
+
+<code>[**revert_on_nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, an iteration that would leave fewer than `nkeep` usable samples at a pixel is reverted in full for that pixel. Input masks, threshold masks, and non-finite samples remain excluded. The default is `True`. If `False`, clipping is strict and may leave fewer than `nkeep` samples.
+
+<code>[**rdnoise**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+
+:   Read noise in electrons.
+
+<code>[**snoise**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+
+:   Sky-noise coefficient. Adds a Poisson-like contribution scaled by the local count level.
+
+<code>[**scale_ref**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1.0]{.parameter-default}</code>
+
+:   Reference scale factor. Typically the inverse of the exposure-time normalization applied during reduction.
+
+<code>[**zero_ref**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+
+:   Reference zero-point offset. Accounts for a known DC bias that shifts the effective noise level.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, check dimensionality and normalize dtype/contiguity before entering the Rust kernel. If `False`, callers must provide inputs that satisfy the compiled kernel assumptions.
+
+## Returns {.doc-section .doc-section-returns}
+
+<code>[**combined**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Mean or median of the surviving values after applying the input mask, finite-value filtering, and this rejection algorithm.
+
+## Notes {.doc-section .doc-section-notes}
+
+The kernel evaluates CCD rejection on gain-corrected scratch values (electrons). The per-pixel noise threshold is approximately::
+
+    sqrt((1 + snoise) * abs(noise_center + zero_ref) * scale_ref + rdnoise**2)

@@ -102,7 +102,7 @@ available through ``combine="lmedian"`` or pure
 
 <code>[**method**]{.parameter-name} [:]{.parameter-annotation-sep} [str]{.parameter-annotation} [ = ]{.parameter-default-sep} [\'mean\']{.parameter-default}</code>
 
-:   Combine method. Supported aliases are `"mean"`, `"average"`, `"avg"`, `"median"`, `"med"`, `"lmedian"`, `"lmed"`, `"sum"`, `"min"`, `"max"`, `"variance"` and `"var"`.
+:   Combine method. Supported aliases are `"mean"`, `"average"`, `"avg"`, `"median"`, `"med"`, `"lmedian"`, `"lmed"`, `"sum"`, `"min"`, `"max"`, `"variance"`, `"var"`.
 
 <code>[**weight**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of shape (N,)]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
 

@@ -49,7 +49,7 @@ rejection, normalization, or weights uses the normal floating workspace.
 
 <code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *spatial))]{.parameter-annotation}</code>
 
-:   Image stack. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Pure stack reductions use `reducers`: integer `mean`, `median`, `sum`, and `variance` produce floating results, while integer `min`, `max`, and `lmedian` preserve integer dtype. Masking, rejection, zero/scale, and fused-kernel workflows use imcombiners' floating workspace (`uint8`, `uint16`, and `int16` to `float32`; `int32` to `float64`). Other dtypes, including `int64` and `float128`, are not silently cast. Inputs with more than 3 dimensions are supported and outputs are reshaped back to the original trailing spatial dimensions.
+:   Image stack. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. `uint8`, `uint16`, and `int16` are promoted to `float32`; `int32` is promoted to `float64`; `float32` and `float64` are preserved. Other dtypes, including `int64` and `float128`, are not silently cast. If your data use an unsupported dtype, cast them explicitly before calling `ndcombine`; there is no full-precision `int64` combine path because the package does not provide a `float128` workspace. Inputs with more than 3 dimensions are flattened internally; all outputs are reshaped back to the original trailing spatial dimensions.
 
 <code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
 
@@ -61,7 +61,7 @@ rejection, normalization, or weights uses the normal floating workspace.
 
 <code>[**combine**]{.parameter-name} [:]{.parameter-annotation-sep} [str]{.parameter-annotation} [ = ]{.parameter-default-sep} [\'mean\']{.parameter-default}</code>
 
-:   Combine method. Supported aliases are `"mean"`, `"average"`, `"avg"`, `"median"`, `"med"`, `"lmedian"`, `"lmed"`, `"sum"`, `"min"`, `"max"`, `"variance"` and `"var"`.
+:   Combine method. Supported aliases are `"mean"`, `"average"`, `"avg"`, `"median"`, `"med"`, `"lmedian"`, `"lmed"`, `"sum"`, `"min"`, `"max"`, `"variance"`, and `"var"`.
 
 <code>[**reject**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'minmax\', \'pclip\', \'sigclip\', \'ccdclip\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"minmax\"]{.parameter-default}</code>
 

@@ -24,10 +24,22 @@ _MASK_PARAM = """mask : ndarray of bool, optional
     Input mask; `True` means already masked. Must have the same shape as `arr`
     before any internal flattening."""
 
+_VALUES_PARAM = """values : ndarray, shape (N,)
+    One-dimensional value vector. Accepted dtypes are `uint8`, `uint16`,
+    `int16`, `int32`, `float32`, and `float64`. Integer inputs are promoted to
+    the package's floating workspace when `validate` is `True`."""
+
+_MASK_PARAM_1D = """mask : ndarray of bool, optional
+    Input mask; `True` means already masked. Must have shape ``(N,)``."""
+
 _GROW_PARAM = """grow : float or None, optional
     Optional radius in pixels used to grow `mask_rej` spatially after
     rejection. Axis 0 is the stack axis and is never grown across. `None`
     disables growth and skips the extra calculation."""
+
+_COMBINE_PARAM = """combine : str
+    Output combine method evaluated after rejection. Fused combine kernels
+    support `"mean"`, `"average"`, `"avg"`, `"median"`, and `"med"`."""
 
 _ITERATIVE_PARAMS = """sigma : float or tuple of float
     User-supplied clipping multiplier, not the measured data spread itself.
@@ -91,6 +103,37 @@ output_flags : ndarray of uint8, shape (*spatial)
     use bit ``2`` for maxiters, bit ``4`` for `nkeep`, and bit ``8`` for
     `maxrej`. Bits are OR-ed. `output_flags` is a per-output diagnostic; use
     ``mask_rej.sum(axis=0)`` to count samples rejected by this step."""
+
+_REJECTION_RETURNS_1D = """mask_rej : ndarray of bool, shape (N,)
+    `True` where a value was rejected by this kernel.
+std : scalar or None
+    Spread used by sigma/CCD clipping. `None` for rejection algorithms without
+    a spread diagnostic.
+low : scalar
+    Lower retained-value bound. Bounds are inclusive: values equal to `low`
+    are retained.
+upp : scalar
+    Upper retained-value bound. Bounds are inclusive: values equal to `upp`
+    are retained.
+nit : scalar
+    Iteration count.
+output_flags : scalar
+    Bit-coded status using the same bit meanings as the stack kernel."""
+
+_MASK_RETURNS = """mask_rej : ndarray of bool, shape (N, *spatial)
+    `True` where a value was rejected by this kernel.
+    ``mask_rej.sum(axis=0)`` is the per-output rejected count."""
+
+_MASK_RETURNS_1D = """mask_rej : ndarray of bool, shape (N,)
+    `True` where a value was rejected by this kernel."""
+
+_COMBINE_RETURNS = """combined : ndarray, shape (*spatial)
+    Per-output mean or median after applying the input mask, finite-value
+    filtering, and this rejection algorithm."""
+
+_COMBINE_RETURNS_1D = """combined : scalar
+    Mean or median of the surviving values after applying the input mask,
+    finite-value filtering, and this rejection algorithm."""
 
 
 _COMBINE_SPECS = {
@@ -280,6 +323,31 @@ def install_kernel_docstrings(namespace: MutableMapping[str, object]) -> None:
         obj = namespace.get(name)
         if obj is not None:
             obj.__doc__ = _rejection_doc(summary, params, notes)
+        obj = namespace.get(f"{name}_1d")
+        if obj is not None:
+            obj.__doc__ = _rejection_1d_doc(
+                _variant_summary(summary, "1-D"), params, notes
+            )
+        obj = namespace.get(f"{name}_mask")
+        if obj is not None:
+            obj.__doc__ = _rejection_mask_doc(
+                _variant_summary(summary, "mask-only"), params, notes
+            )
+        obj = namespace.get(f"{name}_mask_1d")
+        if obj is not None:
+            obj.__doc__ = _rejection_mask_1d_doc(
+                _variant_summary(summary, "1-D mask-only"), params, notes
+            )
+        obj = namespace.get(f"{name}_combine")
+        if obj is not None:
+            obj.__doc__ = _rejection_combine_doc(
+                _variant_summary(summary, "output-only"), params, notes
+            )
+        obj = namespace.get(f"{name}_combine_1d")
+        if obj is not None:
+            obj.__doc__ = _rejection_combine_1d_doc(
+                _variant_summary(summary, "1-D output-only"), params, notes
+            )
 
 
 def install_rejector_docstrings(namespace: MutableMapping[str, object]) -> None:
@@ -340,6 +408,133 @@ Returns
     if notes:
         doc += f"\nNotes\n-----\n{notes}\n"
     return doc
+
+
+def _rejection_1d_doc(summary: str, algorithm_params: str, notes: str) -> str:
+    params = "\n".join(
+        part
+        for part in (_VALUES_PARAM, _MASK_PARAM_1D, algorithm_params, _VALIDATE_PARAM)
+        if part
+    )
+    doc = f"""{summary}
+
+Parameters
+----------
+{params}
+
+Returns
+-------
+{_REJECTION_RETURNS_1D}
+"""
+    if notes:
+        doc += f"\nNotes\n-----\n{notes}\n"
+    return doc
+
+
+def _rejection_mask_doc(summary: str, algorithm_params: str, notes: str) -> str:
+    params = "\n".join(
+        part
+        for part in (
+            _STACK_PARAM,
+            _MASK_PARAM,
+            algorithm_params,
+            _GROW_PARAM,
+            _VALIDATE_PARAM,
+        )
+        if part
+    )
+    doc = f"""{summary}
+
+Parameters
+----------
+{params}
+
+Returns
+-------
+{_MASK_RETURNS}
+"""
+    if notes:
+        doc += f"\nNotes\n-----\n{notes}\n"
+    return doc
+
+
+def _rejection_mask_1d_doc(summary: str, algorithm_params: str, notes: str) -> str:
+    params = "\n".join(
+        part
+        for part in (_VALUES_PARAM, _MASK_PARAM_1D, algorithm_params, _VALIDATE_PARAM)
+        if part
+    )
+    doc = f"""{summary}
+
+Parameters
+----------
+{params}
+
+Returns
+-------
+{_MASK_RETURNS_1D}
+"""
+    if notes:
+        doc += f"\nNotes\n-----\n{notes}\n"
+    return doc
+
+
+def _rejection_combine_doc(summary: str, algorithm_params: str, notes: str) -> str:
+    params = "\n".join(
+        part
+        for part in (
+            _STACK_PARAM,
+            _MASK_PARAM,
+            _COMBINE_PARAM,
+            algorithm_params,
+            _VALIDATE_PARAM,
+        )
+        if part
+    )
+    doc = f"""{summary}
+
+Parameters
+----------
+{params}
+
+Returns
+-------
+{_COMBINE_RETURNS}
+"""
+    if notes:
+        doc += f"\nNotes\n-----\n{notes}\n"
+    return doc
+
+
+def _rejection_combine_1d_doc(summary: str, algorithm_params: str, notes: str) -> str:
+    params = "\n".join(
+        part
+        for part in (
+            _VALUES_PARAM,
+            _MASK_PARAM_1D,
+            _COMBINE_PARAM,
+            algorithm_params,
+            _VALIDATE_PARAM,
+        )
+        if part
+    )
+    doc = f"""{summary}
+
+Parameters
+----------
+{params}
+
+Returns
+-------
+{_COMBINE_RETURNS_1D}
+"""
+    if notes:
+        doc += f"\nNotes\n-----\n{notes}\n"
+    return doc
+
+
+def _variant_summary(summary: str, label: str) -> str:
+    return f"{summary.rstrip('.')} ({label} variant)."
 
 
 def _rejector_class_doc(summary: str, params: str) -> str:

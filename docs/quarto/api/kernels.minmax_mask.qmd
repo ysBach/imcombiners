@@ -12,4 +12,36 @@ kernels.minmax_mask(
 )
 ```
 
-Return only the minmax rejection mask.
+Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. Single-pass (mask-only variant).
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *spatial))]{.parameter-annotation}</code>
+
+:   Image stack. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Integer inputs are promoted to the package's floating workspace when `validate` is `True`. Inputs with more than 3 dimensions are flattened internally; output shapes match the trailing spatial dimensions of the input.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Input mask; `True` means already masked. Must have the same shape as `arr` before any internal flattening.
+
+<code>[**n_min**]{.parameter-name} [:]{.parameter-annotation-sep} [int or float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Number of minimum-side values to reject at each pixel. Values ``>= 1`` are treated as a frame count. Values in ``[0, 1)`` are treated as a fraction of the total frame count ``N`` and converted via ``int(N * n_min + 0.001)``, matching IRAF's internal fraction arithmetic.
+
+<code>[**n_max**]{.parameter-name} [:]{.parameter-annotation-sep} [int or float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Same convention as `n_min`, applied to the maximum-side tail.
+
+<code>[**grow**]{.parameter-name} [:]{.parameter-annotation-sep} [float or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Optional radius in pixels used to grow `mask_rej` spatially after rejection. Axis 0 is the stack axis and is never grown across. `None` disables growth and skips the extra calculation.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, check dimensionality and normalize dtype/contiguity before entering the Rust kernel. If `False`, callers must provide inputs that satisfy the compiled kernel assumptions.
+
+## Returns {.doc-section .doc-section-returns}
+
+<code>[**mask_rej**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool, shape (N, *spatial)]{.parameter-annotation}</code>
+
+:   `True` where a value was rejected by this kernel. ``mask_rej.sum(axis=0)`` is the per-output rejected count.

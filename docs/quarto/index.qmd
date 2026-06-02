@@ -76,7 +76,25 @@ A convenience function `place_into_padded(images, offsets)` is also available fo
 
 One dtype detail differs by mode: pure compact `ndcombine()` calls with `combine="lmedian"` preserve accepted integer dtypes, while Combiner workflows with masking, rejection, zero, scale, or weights use the normal floating workspace.
 
-## 2. Features
+## 2. Rust Crate Use
+
+`imcombiners` is also usable as a Rust crate. The public Rust-facing API exposes
+lower-level stack combine and rejection kernels.
+
+```toml
+[dependencies]
+imcombiners = "<version>"
+```
+
+Replace `<version>` with the release version you want to depend on.
+
+Build local Rust API docs with:
+
+```bash
+cargo doc --no-default-features --open
+```
+
+## 3. Features
 
 - Combine methods: mean, median, lower median (`lmed`), percentiles, sum, min, max, variance, and weighted mean via `weight=` on mean/average.
 - Rejection methods: sigma clipping, CCD-noise clipping, iterative center-relative linear clipping, min/max clipping, and IRAF-style `pclip`.
@@ -85,7 +103,7 @@ One dtype detail differs by mode: pure compact `ndcombine()` calls with `combine
 - Public input dtypes are intentionally limited; unsupported dtypes such as `int64` and `float128` are not silently cast. See [Conventions](#conventions) for the exact dtype policy.
 - Rejection diagnostics use `mask, std, low, upp, nit, output_flags`: `std` is an array for sigma/CCD clipping and `None` for rejection methods that do not compute a standard-deviation diagnostic.
 
-## 3. Rejection
+## 4. Rejection
 
 | Spec      | Kernel    | One-liner                                  |
 |-----------|-----------|--------------------------------------------|
@@ -97,7 +115,7 @@ One dtype detail differs by mode: pure compact `ndcombine()` calls with `combine
 
 Iterative sigma, CCD, and linear clipping recompute the clipping center from the current survivors each pass. `LinearClip(maxiters=1)` preserves the historical single-pass behavior; set a larger `maxiters` to iterate. IRAF-like `nkeep` rollback is controlled with `revert_on_nkeep=True`, which is the default safety mode; set it to `False` only for strict clipping that may leave fewer than `nkeep` samples. Rejection centers accept `mean`, `median`/`med`, and lower median (`lmedian`/`lmed`).
 
-## 4. Conventions
+## 5. Conventions
 
 * Stacks are `(N, *spatial)`. Combination and rejection always run along the **stack axis** (axis 0) and return `(*spatial)`.
 * Terminology: the **stack axis** is axis 0 (`N`). An **output element** is one location in `(*spatial)`, such as one image pixel. Diagnostics shaped `(N, *spatial)` are per-sample; diagnostics shaped `(*spatial)` are per-output-element. Documentation avoids using "column" for axis-0 stacks because CCD images already use row/column for spatial axes.
@@ -109,11 +127,11 @@ Iterative sigma, CCD, and linear clipping recompute the clipping center from the
 * High-level diagnostics are controlled with `diagnostics`: `None` returns only the combined image, `"simple"` returns the current per-output-element diagnostics, and `"full"` appends a stack-shaped `uint8` `sample_flags` array. `sample_flags` uses a separate bit namespace: `1=input mask/BPM`, `2=non-finite`, `4=threshold mask`, `8=final algorithm rejection`, `16=added by grow`, and `32=already masked before this rejection step`.
 * Spatial offsets use `(dy, dx)` in Python/NumPy order. Photometric zero offsets use the `zero=` correction in combine APIs; keep these concepts separate when porting FITS/WCS workflows.
 
-## 5. Memory
+## 6. Memory
 
 The current implementation works on full arrays. For a `float32` input stack with size `X = stack.nbytes`, pure combine methods need little extra memory beyond the output. Rejection workflows typically need a boolean rejection mask and a NaN-filled working copy, so plan for roughly `2.5X` total memory. Zero/scale plus rejection can require about `3X` total, and integer inputs entering those workflows are first promoted to a floating workspace. Spatial chunking is planned for memory-constrained large stacks.
 
-## 6. Performance
+## 7. Performance
 
 This package is built around image-stack reductions where both algorithmic work
 and memory traffic matter. The fastest high-level rejection path is usually

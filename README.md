@@ -80,7 +80,7 @@ For Rust crate use:
 
 ```toml
 [dependencies]
-imcombiners = "0.1.1"
+imcombiners = "<version>"
 ```
 
 

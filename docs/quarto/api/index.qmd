@@ -26,30 +26,30 @@ Advanced one-operation primitives for custom pipeline layers.
 | [kernels.nanaverage](kernels.nanaverage.qmd#imcombiners.kernels.nanaverage) | Return the NaN-aware weighted average along the stack axis. |
 | [kernels.grow_mask](kernels.grow_mask.qmd#imcombiners.kernels.grow_mask) | Dilate a stack mask over spatial axes by an exact Euclidean radius. |
 | [kernels.sigclip](kernels.sigclip.qmd#imcombiners.kernels.sigclip) | Sigma-clipping rejection. |
-| [kernels.sigclip_1d](kernels.sigclip_1d.qmd#imcombiners.kernels.sigclip_1d) | Sigma-clipping rejection for a 1-D value vector. |
-| [kernels.sigclip_mask](kernels.sigclip_mask.qmd#imcombiners.kernels.sigclip_mask) | Return only the sigma-clipping rejection mask. |
-| [kernels.sigclip_combine](kernels.sigclip_combine.qmd#imcombiners.kernels.sigclip_combine) | Return an output-only sigma-clipped mean or median. |
-| [kernels.sigclip_combine_1d](kernels.sigclip_combine_1d.qmd#imcombiners.kernels.sigclip_combine_1d) | Return a 1-D sigma-clipped mean or median. |
+| [kernels.sigclip_1d](kernels.sigclip_1d.qmd#imcombiners.kernels.sigclip_1d) | Sigma-clipping rejection (1-D variant). |
+| [kernels.sigclip_mask](kernels.sigclip_mask.qmd#imcombiners.kernels.sigclip_mask) | Sigma-clipping rejection (mask-only variant). |
+| [kernels.sigclip_combine](kernels.sigclip_combine.qmd#imcombiners.kernels.sigclip_combine) | Sigma-clipping rejection (output-only variant). |
+| [kernels.sigclip_combine_1d](kernels.sigclip_combine_1d.qmd#imcombiners.kernels.sigclip_combine_1d) | Sigma-clipping rejection (1-D output-only variant). |
 | [kernels.ccdclip](kernels.ccdclip.qmd#imcombiners.kernels.ccdclip) | CCD noise-model clipping. |
-| [kernels.ccdclip_1d](kernels.ccdclip_1d.qmd#imcombiners.kernels.ccdclip_1d) | CCD noise-model clipping for a 1-D value vector. |
-| [kernels.ccdclip_mask](kernels.ccdclip_mask.qmd#imcombiners.kernels.ccdclip_mask) | Return only the CCD-clipping rejection mask. |
-| [kernels.ccdclip_mask_1d](kernels.ccdclip_mask_1d.qmd#imcombiners.kernels.ccdclip_mask_1d) | Return only the CCD-clipping rejection mask for a 1-D value vector. |
-| [kernels.ccdclip_combine](kernels.ccdclip_combine.qmd#imcombiners.kernels.ccdclip_combine) | Return an output-only CCD-clipped mean or median. |
-| [kernels.ccdclip_combine_1d](kernels.ccdclip_combine_1d.qmd#imcombiners.kernels.ccdclip_combine_1d) | Return a 1-D CCD-clipped mean or median. |
+| [kernels.ccdclip_1d](kernels.ccdclip_1d.qmd#imcombiners.kernels.ccdclip_1d) | CCD noise-model clipping (1-D variant). |
+| [kernels.ccdclip_mask](kernels.ccdclip_mask.qmd#imcombiners.kernels.ccdclip_mask) | CCD noise-model clipping (mask-only variant). |
+| [kernels.ccdclip_mask_1d](kernels.ccdclip_mask_1d.qmd#imcombiners.kernels.ccdclip_mask_1d) | CCD noise-model clipping (1-D mask-only variant). |
+| [kernels.ccdclip_combine](kernels.ccdclip_combine.qmd#imcombiners.kernels.ccdclip_combine) | CCD noise-model clipping (output-only variant). |
+| [kernels.ccdclip_combine_1d](kernels.ccdclip_combine_1d.qmd#imcombiners.kernels.ccdclip_combine_1d) | CCD noise-model clipping (1-D output-only variant). |
 | [kernels.linearclip](kernels.linearclip.qmd#imcombiners.kernels.linearclip) | Center-relative linear clipping (`low + low_scale * center <= value <= upp + upp_scale * center`). |
-| [kernels.linearclip_1d](kernels.linearclip_1d.qmd#imcombiners.kernels.linearclip_1d) | Reject values outside center-relative linear bounds in a 1-D vector. |
+| [kernels.linearclip_1d](kernels.linearclip_1d.qmd#imcombiners.kernels.linearclip_1d) | Center-relative linear clipping (`low + low_scale * center <= value <= upp + upp_scale * center`) (1-D variant). |
 | [kernels.minmax](kernels.minmax.qmd#imcombiners.kernels.minmax) | Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. Single-pass. |
-| [kernels.minmax_1d](kernels.minmax_1d.qmd#imcombiners.kernels.minmax_1d) | Reject tail-ranked unmasked values in a 1-D value vector. |
-| [kernels.minmax_mask](kernels.minmax_mask.qmd#imcombiners.kernels.minmax_mask) | Return only the minmax rejection mask. |
-| [kernels.minmax_mask_1d](kernels.minmax_mask_1d.qmd#imcombiners.kernels.minmax_mask_1d) | Return only the minmax rejection mask for a 1-D value vector. |
-| [kernels.minmax_combine](kernels.minmax_combine.qmd#imcombiners.kernels.minmax_combine) | Return an output-only minmax-rejected mean or median. |
-| [kernels.minmax_combine_1d](kernels.minmax_combine_1d.qmd#imcombiners.kernels.minmax_combine_1d) | Return a 1-D minmax-rejected mean or median. |
+| [kernels.minmax_1d](kernels.minmax_1d.qmd#imcombiners.kernels.minmax_1d) | Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. Single-pass (1-D variant). |
+| [kernels.minmax_mask](kernels.minmax_mask.qmd#imcombiners.kernels.minmax_mask) | Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. Single-pass (mask-only variant). |
+| [kernels.minmax_mask_1d](kernels.minmax_mask_1d.qmd#imcombiners.kernels.minmax_mask_1d) | Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. Single-pass (1-D mask-only variant). |
+| [kernels.minmax_combine](kernels.minmax_combine.qmd#imcombiners.kernels.minmax_combine) | Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. Single-pass (output-only variant). |
+| [kernels.minmax_combine_1d](kernels.minmax_combine_1d.qmd#imcombiners.kernels.minmax_combine_1d) | Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. Single-pass (1-D output-only variant). |
 | [kernels.pclip](kernels.pclip.qmd#imcombiners.kernels.pclip) | IRAF-style percentile clipping at each pixel. |
-| [kernels.pclip_1d](kernels.pclip_1d.qmd#imcombiners.kernels.pclip_1d) | IRAF-style percentile clipping for a 1-D value vector. |
-| [kernels.pclip_mask](kernels.pclip_mask.qmd#imcombiners.kernels.pclip_mask) | Return only the IRAF-style pclip rejection mask. |
-| [kernels.pclip_mask_1d](kernels.pclip_mask_1d.qmd#imcombiners.kernels.pclip_mask_1d) | Return only the IRAF-style pclip rejection mask for a 1-D value vector. |
-| [kernels.pclip_combine](kernels.pclip_combine.qmd#imcombiners.kernels.pclip_combine) | Return an output-only pclip-rejected mean or median. |
-| [kernels.pclip_combine_1d](kernels.pclip_combine_1d.qmd#imcombiners.kernels.pclip_combine_1d) | Return a 1-D pclip-rejected mean or median. |
+| [kernels.pclip_1d](kernels.pclip_1d.qmd#imcombiners.kernels.pclip_1d) | IRAF-style percentile clipping at each pixel (1-D variant). |
+| [kernels.pclip_mask](kernels.pclip_mask.qmd#imcombiners.kernels.pclip_mask) | IRAF-style percentile clipping at each pixel (mask-only variant). |
+| [kernels.pclip_mask_1d](kernels.pclip_mask_1d.qmd#imcombiners.kernels.pclip_mask_1d) | IRAF-style percentile clipping at each pixel (1-D mask-only variant). |
+| [kernels.pclip_combine](kernels.pclip_combine.qmd#imcombiners.kernels.pclip_combine) | IRAF-style percentile clipping at each pixel (output-only variant). |
+| [kernels.pclip_combine_1d](kernels.pclip_combine_1d.qmd#imcombiners.kernels.pclip_combine_1d) | IRAF-style percentile clipping at each pixel (1-D output-only variant). |
 
 ## 3 Compatibility API
 

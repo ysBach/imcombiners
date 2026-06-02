@@ -18,4 +18,84 @@ kernels.linearclip_1d(
 )
 ```
 
-Reject values outside center-relative linear bounds in a 1-D vector.
+Center-relative linear clipping (`low + low_scale * center <= value <= upp + upp_scale * center`) (1-D variant).
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**values**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N))]{.parameter-annotation}</code>
+
+:   One-dimensional value vector. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Integer inputs are promoted to the package's floating workspace when `validate` is `True`.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Input mask; `True` means already masked. Must have shape ``(N,)``.
+
+<code>[**low_scale**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1.0]{.parameter-default}</code>
+
+:   Multiplier for the per-pixel center used in the lower retained bound.
+
+<code>[**low**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+
+:   Non-negative margin subtracted from ``low_scale * center``.
+
+<code>[**upp_scale**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1.0]{.parameter-default}</code>
+
+:   Multiplier for the per-pixel center used in the upper retained bound.
+
+<code>[**upp**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+
+:   Non-negative margin added to ``upp_scale * center``.
+
+<code>[**maxiters**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Maximum number of clipping iterations per pixel. `1` preserves the historical single-pass behavior.
+
+<code>[**nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Minimum number of unmasked values to preserve at each pixel.
+
+<code>[**maxrej**]{.parameter-name} [:]{.parameter-annotation-sep} [int or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Maximum number of values that may be rejected at each pixel. `None` means no limit.
+
+<code>[**cenfunc**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+
+:   Center estimator used each iteration. `lmedian` accepts the alias `lmed` and uses the lower of the two middle samples for even valid counts.
+
+<code>[**revert_on_nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, an iteration that would leave fewer than `nkeep` usable samples at a pixel is reverted in full for that pixel.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, check dimensionality and normalize dtype/contiguity before entering the Rust kernel. If `False`, callers must provide inputs that satisfy the compiled kernel assumptions.
+
+## Returns {.doc-section .doc-section-returns}
+
+<code>[**mask_rej**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool, shape (N,)]{.parameter-annotation}</code>
+
+:   `True` where a value was rejected by this kernel.
+
+<code>[**std**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar or None]{.parameter-annotation}</code>
+
+:   Spread used by sigma/CCD clipping. `None` for rejection algorithms without a spread diagnostic.
+
+<code>[**low**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Lower retained-value bound. Bounds are inclusive: values equal to `low` are retained.
+
+<code>[**upp**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Upper retained-value bound. Bounds are inclusive: values equal to `upp` are retained.
+
+<code>[**nit**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Iteration count.
+
+<code>[**output_flags**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Bit-coded status using the same bit meanings as the stack kernel.
+
+## Notes {.doc-section .doc-section-notes}
+
+Values survive when ``low_scale * center - low <= value <= upp_scale * center + upp``. Each iteration recomputes the center from finite, unmasked survivors and stops when no new samples are rejected or `maxiters` is reached. The default bounds ``(1, 0, 1, 0)`` are a no-op.

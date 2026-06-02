@@ -47,3 +47,20 @@ def test_output_only_reject_kernels_are_public_and_documented():
         func = getattr(kernels, name)
         assert func.__doc__ is not None
         assert not name.startswith("_")
+
+
+def test_rejection_variant_docstrings_include_public_parameters():
+    assert kernels.sigclip_combine.__doc__ is not None
+    assert "combine : str" in kernels.sigclip_combine.__doc__
+    assert "Output combine method evaluated after rejection" in (
+        kernels.sigclip_combine.__doc__
+    )
+    assert '`"mean"`, `"average"`, `"avg"`, `"median"`, and `"med"`' in (
+        kernels.sigclip_combine.__doc__
+    )
+    assert "combined : ndarray, shape (*spatial)" in kernels.sigclip_combine.__doc__
+
+    assert kernels.minmax_mask_1d.__doc__ is not None
+    assert "values : ndarray, shape (N,)" in kernels.minmax_mask_1d.__doc__
+    assert "n_min : int or float" in kernels.minmax_mask_1d.__doc__
+    assert "mask_rej : ndarray of bool, shape (N,)" in kernels.minmax_mask_1d.__doc__

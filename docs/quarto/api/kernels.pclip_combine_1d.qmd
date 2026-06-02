@@ -13,4 +13,44 @@ kernels.pclip_combine_1d(
 )
 ```
 
-Return a 1-D pclip-rejected mean or median.
+IRAF-style percentile clipping at each pixel (1-D output-only variant).
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**values**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N))]{.parameter-annotation}</code>
+
+:   One-dimensional value vector. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Integer inputs are promoted to the package's floating workspace when `validate` is `True`.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Input mask; `True` means already masked. Must have shape ``(N,)``.
+
+<code>[**combine**]{.parameter-name} [:]{.parameter-annotation-sep} [str]{.parameter-annotation}</code>
+
+:   Output combine method evaluated after rejection. Fused combine kernels support `"mean"`, `"average"`, `"avg"`, `"median"`, and `"med"`.
+
+<code>[**frac**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [-0.5]{.parameter-default}</code>
+
+:   IRAF `pclip` value. If ``abs(frac) < 1``, it is converted to an integer rank offset using half of the input image count. Positive values estimate sigma from the high side of the sorted median; negative values estimate sigma from the low side.
+
+<code>[**sigma**]{.parameter-name} [:]{.parameter-annotation-sep} [float or tuple of float]{.parameter-annotation} [ = ]{.parameter-default-sep} [3.0]{.parameter-default}</code>
+
+:   User-supplied lower and upper clipping multipliers applied to the pclip-estimated spread. This maps to IRAF `lsigma` and `hsigma`.
+
+<code>[**nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Minimum number of unmasked samples to retain after pclip rejection.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, check dimensionality and normalize dtype/contiguity before entering the Rust kernel. If `False`, callers must provide inputs that satisfy the compiled kernel assumptions.
+
+## Returns {.doc-section .doc-section-returns}
+
+<code>[**combined**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Mean or median of the surviving values after applying the input mask, finite-value filtering, and this rejection algorithm.
+
+## Notes {.doc-section .doc-section-notes}
+
+This follows IRAF `imcombine` pclip semantics: choose a sorted rank offset from the median, use that sample's distance from the median as sigma, then apply lower and upper sigma thresholds.

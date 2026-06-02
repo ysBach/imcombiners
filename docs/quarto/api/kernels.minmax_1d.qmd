@@ -4,4 +4,52 @@
 kernels.minmax_1d(values, *, mask=None, n_min=1, n_max=1, validate=True)
 ```
 
-Reject tail-ranked unmasked values in a 1-D value vector.
+Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. Single-pass (1-D variant).
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**values**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N))]{.parameter-annotation}</code>
+
+:   One-dimensional value vector. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Integer inputs are promoted to the package's floating workspace when `validate` is `True`.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Input mask; `True` means already masked. Must have shape ``(N,)``.
+
+<code>[**n_min**]{.parameter-name} [:]{.parameter-annotation-sep} [int or float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Number of minimum-side values to reject at each pixel. Values ``>= 1`` are treated as a frame count. Values in ``[0, 1)`` are treated as a fraction of the total frame count ``N`` and converted via ``int(N * n_min + 0.001)``, matching IRAF's internal fraction arithmetic.
+
+<code>[**n_max**]{.parameter-name} [:]{.parameter-annotation-sep} [int or float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Same convention as `n_min`, applied to the maximum-side tail.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, check dimensionality and normalize dtype/contiguity before entering the Rust kernel. If `False`, callers must provide inputs that satisfy the compiled kernel assumptions.
+
+## Returns {.doc-section .doc-section-returns}
+
+<code>[**mask_rej**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool, shape (N,)]{.parameter-annotation}</code>
+
+:   `True` where a value was rejected by this kernel.
+
+<code>[**std**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar or None]{.parameter-annotation}</code>
+
+:   Spread used by sigma/CCD clipping. `None` for rejection algorithms without a spread diagnostic.
+
+<code>[**low**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Lower retained-value bound. Bounds are inclusive: values equal to `low` are retained.
+
+<code>[**upp**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Upper retained-value bound. Bounds are inclusive: values equal to `upp` are retained.
+
+<code>[**nit**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Iteration count.
+
+<code>[**output_flags**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Bit-coded status using the same bit meanings as the stack kernel.

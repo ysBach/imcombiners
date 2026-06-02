@@ -18,4 +18,80 @@ kernels.sigclip_1d(
 )
 ```
 
-Sigma-clipping rejection for a 1-D value vector.
+Sigma-clipping rejection (1-D variant).
+
+## Parameters {.doc-section .doc-section-parameters}
+
+<code>[**values**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N))]{.parameter-annotation}</code>
+
+:   One-dimensional value vector. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Integer inputs are promoted to the package's floating workspace when `validate` is `True`.
+
+<code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Input mask; `True` means already masked. Must have shape ``(N,)``.
+
+<code>[**sigma**]{.parameter-name} [:]{.parameter-annotation-sep} [float or tuple of float]{.parameter-annotation} [ = ]{.parameter-default-sep} [(3.0, 3.0)]{.parameter-default}</code>
+
+:   User-supplied clipping multiplier, not the measured data spread itself. Values are clipped when their residual from the clipping center exceeds ``sigma * spread``. A scalar applies the same multiplier to both tails; a 2-tuple ``(sigma_lower, sigma_upper)`` clips asymmetrically. Thresholds must be finite and non-negative.
+
+<code>[**maxiters**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [5]{.parameter-default}</code>
+
+:   Maximum number of clipping iterations per pixel.
+
+<code>[**ddof**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [0]{.parameter-default}</code>
+
+:   Delta degrees of freedom for the per-pixel spread estimator.
+
+<code>[**nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [int]{.parameter-annotation} [ = ]{.parameter-default-sep} [1]{.parameter-default}</code>
+
+:   Minimum number of unmasked values to preserve at each pixel. An iteration that would drop below this count is reverted in full. The default, `1`, prevents clipping from rejecting every finite sample in a per-output stack. Set `0` only when all samples may be rejected.
+
+<code>[**maxrej**]{.parameter-name} [:]{.parameter-annotation-sep} [int or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
+
+:   Maximum number of values that may be rejected at each pixel. `None` means no limit.
+
+<code>[**cenfunc**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+
+:   Center estimator used each iteration. `lmedian` accepts the alias `lmed` and uses the lower of the two middle samples for even valid counts.
+
+<code>[**clip_cen**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+
+:   Center used when computing the spread for iterative rejection. `None` uses the same center as `cenfunc`; `lmedian` also accepts `lmed`.
+
+<code>[**revert_on_nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, an iteration that would leave fewer than `nkeep` usable samples at a pixel is reverted in full for that pixel. Input masks, threshold masks, and non-finite samples remain excluded. The default is `True`. If `False`, clipping is strict and may leave fewer than `nkeep` samples.
+
+<code>[**stdfunc**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'std\', \'mad\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"std\"]{.parameter-default}</code>
+
+:   Spread estimator used by sigma clipping. `"std"` uses the standard deviation. `"mad"` uses ``1.4826 * median(abs(x - clip_cen))`` as a robust sigma estimate; when `ddof > 0`, this estimate is multiplied by ``sqrt(nvalid / (nvalid - ddof))`` and pixels with ``nvalid <= ddof`` return `NaN` spread diagnostics.
+
+<code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
+
+:   If `True`, check dimensionality and normalize dtype/contiguity before entering the Rust kernel. If `False`, callers must provide inputs that satisfy the compiled kernel assumptions.
+
+## Returns {.doc-section .doc-section-returns}
+
+<code>[**mask_rej**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool, shape (N,)]{.parameter-annotation}</code>
+
+:   `True` where a value was rejected by this kernel.
+
+<code>[**std**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar or None]{.parameter-annotation}</code>
+
+:   Spread used by sigma/CCD clipping. `None` for rejection algorithms without a spread diagnostic.
+
+<code>[**low**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Lower retained-value bound. Bounds are inclusive: values equal to `low` are retained.
+
+<code>[**upp**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Upper retained-value bound. Bounds are inclusive: values equal to `upp` are retained.
+
+<code>[**nit**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Iteration count.
+
+<code>[**output_flags**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
+
+:   Bit-coded status using the same bit meanings as the stack kernel.
