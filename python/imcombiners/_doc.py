@@ -77,9 +77,7 @@ _SIGMA_ITERATIVE_PARAMS = (
 stdfunc : {"std", "mad"}
     Spread estimator used by sigma clipping. `"std"` uses the standard
     deviation. `"mad"` uses ``1.4826 * median(abs(x - clip_cen))`` as a robust
-    sigma estimate; when `ddof > 0`, this estimate is multiplied by
-    ``sqrt(nvalid / (nvalid - ddof))`` and pixels with ``nvalid <= ddof``
-    return `NaN` spread diagnostics."""
+    sigma estimate and ignores `ddof`."""
 )
 
 _REJECTION_RETURNS = """mask_rej : ndarray of bool, shape (N, *spatial)
@@ -162,18 +160,18 @@ _REJECTION_SPECS = {
         _ITERATIVE_PARAMS + "\nrdnoise : float\n"
         "    Read noise in electrons.\n"
         "snoise : float\n"
-        "    Sky-noise coefficient. Adds a Poisson-like contribution scaled by "
-        "the local count level.\n"
+        "    Fractional sensitivity-noise coefficient. Its independent variance "
+        "term is quadratic in the local signal.\n"
         "scale_ref : float\n"
         "    Reference scale factor. Typically the inverse of the exposure-time "
         "normalization applied during reduction.\n"
         "zero_ref : float\n"
         "    Reference zero-point offset. Accounts for a known DC bias that "
         "shifts the effective noise level.",
-        "The kernel evaluates CCD rejection on gain-corrected scratch values "
-        "(electrons). The per-pixel noise threshold is approximately::\n\n"
-        "    sqrt((1 + snoise) * abs(noise_center + zero_ref) * scale_ref + "
-        "rdnoise**2)",
+        "The kernel evaluates CCD rejection in the input DN units. With "
+        "``signal = abs(noise_center + zero_ref) * scale_ref``, the per-pixel "
+        "noise threshold is::\n\n"
+        "    sqrt((rdnoise / gain)**2 + signal / gain + (snoise * signal)**2)",
     ),
     "linearclip": (
         "Center-relative linear clipping (`low + low_scale * center <= value <= "
@@ -248,12 +246,11 @@ _REJECTOR_CLASS_DOCS = {
         _ITERATIVE_PARAMS + "\nrdnoise : float\n"
         "    Read noise in electrons.\n"
         "gain : float\n"
-        "    CCD gain in electrons per DN. Rejection is evaluated on "
-        "gain-corrected values equivalent to ``arr / gain`` without requiring "
-        "callers to pre-divide the input stack.\n"
+        "    CCD gain in electrons per DN. Input values and rejection residuals "
+        "remain in DN.\n"
         "snoise : float\n"
-        "    Sky-noise coefficient. Adds a Poisson-like contribution scaled by "
-        "the local count level.\n"
+        "    Fractional sensitivity-noise coefficient. Its independent variance "
+        "term is quadratic in the local signal.\n"
         "scale_ref : float\n"
         "    Reference scale factor. Typically the inverse of the exposure-time "
         "normalization applied during reduction.\n"

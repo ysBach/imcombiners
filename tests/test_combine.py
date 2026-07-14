@@ -164,7 +164,7 @@ def test_ndcombine_variance_after_rejection_matches_final_mask():
         reject="minmax",
         n_minmax=(0, 1),
         ddof=1,
-        full=True,
+        diagnostics="simple",
     )
     assert mask_thresh is None
     arr_eff = np.where(mask_rej, np.nan, arr)
@@ -179,7 +179,7 @@ def test_ndcombine_thresholds_return_mask_thresh_and_precede_combine():
         arr,
         combine="mean",
         thresholds=(0.0, 10.0),
-        full=True,
+        diagnostics="simple",
     )
 
     expected_mask = arr > 10.0
@@ -205,7 +205,7 @@ def test_ndcombine_diagnostics_simple_matches_legacy_full_tuple():
         combine="mean",
         reject="minmax",
         n_minmax=(0, 1),
-        full=True,
+        diagnostics="simple",
     )
 
     assert len(simple) == 8
@@ -336,11 +336,11 @@ def test_ndcombine_rejects_unknown_diagnostics_level():
         ndcombine(arr, diagnostics="verbose")
 
 
-def test_ndcombine_rejects_full_and_diagnostics_together():
+def test_ndcombine_rejects_removed_full_keyword():
     arr = np.ones((3, 1, 1), dtype=np.float32)
 
-    with pytest.raises(ValueError, match="either diagnostics or full"):
-        ndcombine(arr, full=True, diagnostics="simple")
+    with pytest.raises(TypeError, match="unexpected keyword argument 'full'"):
+        ndcombine(arr, full=True)  # type: ignore[call-arg]
 
 
 def test_ndcombine_thresholds_precede_zero_scale_statistics():
@@ -377,7 +377,6 @@ def test_ndcombine_full_false_sigclip_mean_matches_full_true():
         mask=mask,
         combine="mean",
         reject="sigclip",
-        full=False,
         sigma=3.0,
         maxiters=5,
     )
@@ -386,7 +385,7 @@ def test_ndcombine_full_false_sigclip_mean_matches_full_true():
         mask=mask,
         combine="mean",
         reject="sigclip",
-        full=True,
+        diagnostics="simple",
         sigma=3.0,
         maxiters=5,
     )[0]
@@ -417,8 +416,8 @@ def test_ndcombine_full_false_fused_sigclip_mean_matches_after_preprocessing():
         "revert_on_nkeep": True,
     }
 
-    out_fused = ndcombine(arr, full=False, **kwargs)
-    out_reference = ndcombine(arr, full=True, **kwargs)[0]
+    out_fused = ndcombine(arr, **kwargs)
+    out_reference = ndcombine(arr, diagnostics="simple", **kwargs)[0]
 
     assert out_fused.shape == arr.shape[1:]
     np.testing.assert_allclose(out_fused, out_reference, rtol=1e-6, atol=1e-6)
@@ -442,7 +441,6 @@ def test_ndcombine_full_false_fused_sigclip_mean_matches_promoted_integer_input(
         reject="sigclip",
         sigma=2.0,
         maxiters=3,
-        full=False,
     )
     out_reference = ndcombine(
         arr,
@@ -450,7 +448,7 @@ def test_ndcombine_full_false_fused_sigclip_mean_matches_promoted_integer_input(
         reject="sigclip",
         sigma=2.0,
         maxiters=3,
-        full=True,
+        diagnostics="simple",
     )[0]
 
     np.testing.assert_allclose(out_fused, out_reference, rtol=1e-6, atol=1e-6)
@@ -469,7 +467,6 @@ def test_ndcombine_full_false_sigclip_median_matches_full_true():
         mask=mask,
         combine="median",
         reject="sigclip",
-        full=False,
         sigma=(2.5, 3.0),
         maxiters=5,
     )
@@ -478,7 +475,7 @@ def test_ndcombine_full_false_sigclip_median_matches_full_true():
         mask=mask,
         combine="median",
         reject="sigclip",
-        full=True,
+        diagnostics="simple",
         sigma=(2.5, 3.0),
         maxiters=5,
     )[0]
@@ -509,8 +506,8 @@ def test_ndcombine_full_false_fused_sigclip_median_matches_after_preprocessing()
         "revert_on_nkeep": True,
     }
 
-    out_fused = ndcombine(arr, full=False, **kwargs)
-    out_reference = ndcombine(arr, full=True, **kwargs)[0]
+    out_fused = ndcombine(arr, **kwargs)
+    out_reference = ndcombine(arr, diagnostics="simple", **kwargs)[0]
 
     assert out_fused.shape == arr.shape[1:]
     np.testing.assert_allclose(out_fused, out_reference, rtol=1e-6, atol=1e-6)
@@ -542,8 +539,8 @@ def test_ndcombine_full_false_sigclip_fused_fallback_recompute_branches(
     }
     base_kwargs.update(kwargs)
 
-    out_fused = ndcombine(arr, full=False, **base_kwargs)
-    out_reference = ndcombine(arr, full=True, **base_kwargs)[0]
+    out_fused = ndcombine(arr, **base_kwargs)
+    out_reference = ndcombine(arr, diagnostics="simple", **base_kwargs)[0]
 
     np.testing.assert_allclose(
         out_fused, out_reference, rtol=1e-6, atol=1e-6, equal_nan=True
@@ -562,14 +559,13 @@ def test_ndcombine_full_false_sigclip_fused_all_masked_columns_are_nan(combine):
         mask=mask,
         combine=combine,
         reject="sigclip",
-        full=False,
     )
     out_reference = ndcombine(
         arr,
         mask=mask,
         combine=combine,
         reject="sigclip",
-        full=True,
+        diagnostics="simple",
     )[0]
 
     np.testing.assert_allclose(
@@ -605,7 +601,6 @@ def test_ndcombine_full_false_fused_reject_combine_matches_full_true(
         mask=mask,
         combine=combine,
         reject=reject,
-        full=False,
         **kwargs,
     )
     out_reference = ndcombine(
@@ -613,7 +608,7 @@ def test_ndcombine_full_false_fused_reject_combine_matches_full_true(
         mask=mask,
         combine=combine,
         reject=reject,
-        full=True,
+        diagnostics="simple",
         **kwargs,
     )[0]
 
@@ -652,7 +647,6 @@ def test_public_output_only_reject_kernels_match_ndcombine(
         arr,
         combine="median",
         reject=reject,
-        full=False,
         validate=False,
         **nd_kwargs,
     )
@@ -677,7 +671,6 @@ def test_ndcombine_ccdclip_mask_path_passes_gain_without_python_predivide(monkey
         combine="sum",
         reject="ccdclip",
         gain=2.0,
-        full=False,
     )
 
     assert called["gain"] == 2.0
@@ -716,8 +709,8 @@ def test_ndcombine_fused_reject_matches_full_true_preprocessed_integer(
         **kwargs,
     }
 
-    out_fused = ndcombine(arr, full=False, **call_kwargs)
-    out_reference = ndcombine(arr, full=True, **call_kwargs)[0]
+    out_fused = ndcombine(arr, **call_kwargs)
+    out_reference = ndcombine(arr, diagnostics="simple", **call_kwargs)[0]
 
     assert out_fused.shape == arr.shape[1:]
     assert np.isnan(out_fused[0, 0, 0])
@@ -742,7 +735,7 @@ def test_ndcombine_full_false_uses_fused_sigclip_mean_when_available(monkeypatch
     monkeypatch.setattr(imc.kernels, "sigclip_combine", fake_fused, raising=False)
     monkeypatch.setattr(imc.kernels, "sigclip_mask", old_mask_path)
 
-    out = ndcombine(arr, combine="mean", reject="sigclip", full=False)
+    out = ndcombine(arr, combine="mean", reject="sigclip")
 
     assert called == {"shape": arr.shape, "combine": "mean"}
     assert out.shape == arr.shape[1:]
@@ -764,7 +757,7 @@ def test_ndcombine_full_false_uses_fused_sigclip_median_when_available(monkeypat
     monkeypatch.setattr(imc.kernels, "sigclip_combine", fake_fused, raising=False)
     monkeypatch.setattr(imc.kernels, "sigclip_mask", old_mask_path)
 
-    out = ndcombine(arr, combine="median", reject="sigclip", full=False)
+    out = ndcombine(arr, combine="median", reject="sigclip")
 
     assert called == {"shape": arr.shape, "combine": "median"}
     assert out.shape == arr.shape[1:]
@@ -807,7 +800,7 @@ def test_ndcombine_full_false_uses_fused_reject_combine_when_available(
     monkeypatch.setattr(imc.kernels, fused_name, fake_fused, raising=False)
     monkeypatch.setattr(imc.kernels, mask_name, old_mask_path)
 
-    out = ndcombine(arr, combine=combine, reject=reject, full=False, **kwargs)
+    out = ndcombine(arr, combine=combine, reject=reject, **kwargs)
 
     expected = {"shape": arr.shape, "combine": combine}
     if reject == "ccdclip":
@@ -841,7 +834,6 @@ def test_ndcombine_full_false_falls_back_when_grow_requested(
         combine="mean",
         reject=reject,
         grow=1,
-        full=False,
         **kwargs,
     )
 
@@ -864,7 +856,7 @@ def test_ndcombine_full_true_never_uses_fused_path(
     arr = rng.normal(100.0, 5.0, (9, 4, 5)).astype(np.float32)
 
     def fused_should_not_run(*args, **kwargs):
-        raise AssertionError("fused path should not run for full=True")
+        raise AssertionError("fused path should not run with diagnostics")
 
     monkeypatch.setattr(imc.kernels, fused_name, fused_should_not_run, raising=False)
 
@@ -872,7 +864,7 @@ def test_ndcombine_full_true_never_uses_fused_path(
         arr,
         combine="mean",
         reject=reject,
-        full=True,
+        diagnostics="simple",
         **kwargs,
     )
 
@@ -928,7 +920,7 @@ def test_ndcombine_mask_only_rejection_matches_diagnostic_path(reject):
         kwargs["pclip"] = 0.25
 
     out_mask_only = ndcombine(arr, **kwargs)
-    out_diag = ndcombine(arr, full=True, **kwargs)[0]
+    out_diag = ndcombine(arr, diagnostics="simple", **kwargs)[0]
 
     np.testing.assert_allclose(out_mask_only, out_diag, rtol=1e-6, atol=1e-6)
 
@@ -946,7 +938,7 @@ def test_ndcombine_median_sigclip_full_reports_kernel_rejection_mask():
         maxiters=5,
         nkeep=1,
         revert_on_nkeep=True,
-        full=True,
+        diagnostics="simple",
     )
 
     assert out[0, 0] == 1007.0
@@ -972,7 +964,7 @@ def test_ndcombine_median_pclip_full_reports_kernel_rejection_mask():
         combine="median",
         reject="pclip",
         pclip=0.25,
-        full=True,
+        diagnostics="simple",
     )
 
     assert out[0, 0] == 1006.0

@@ -152,7 +152,7 @@ the script subtracts a dtype-specific 1x1 output-only `imcombine` baseline from
 each IRAF workload repeat. Use `--iraf-baseline startup` or
 `--iraf-baseline none` to change that.
 
-**`imc` timing:** reads the generated FITS inputs with `fitsio`, stacks them with NumPy, runs `ndcombine(..., full=False)`, and writes the combined FITS output to a temporary directory on each timed iteration.
+**`imc` timing:** reads the generated FITS inputs with `fitsio`, stacks them with NumPy, runs `ndcombine(..., diagnostics=None)`, and writes the combined FITS output to a temporary directory on each timed iteration.
 
 Before timing, the benchmark asserts each selected output-only `imc` result against an IRAF output-only run. All benchmark inputs, IRAF outputs, and `imc` outputs are created under a Python temporary directory and deleted when the benchmark exits.
 

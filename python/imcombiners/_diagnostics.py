@@ -42,13 +42,9 @@ class OutputFlags(IntFlag):
     GROW = 16
 
 
-def normalize_diagnostics(diagnostics: Diagnostics, full: bool) -> Diagnostics:
-    """Return the effective diagnostics level from new and legacy arguments."""
-    if diagnostics is not None and full:
-        raise ValueError("pass either diagnostics or full, not both")
-    if diagnostics is None:
-        return "simple" if full else None
-    if diagnostics not in ("simple", "full"):
+def normalize_diagnostics(diagnostics: Diagnostics) -> Diagnostics:
+    """Validate and return a diagnostic product level."""
+    if diagnostics not in (None, "simple", "full"):
         raise ValueError("diagnostics must be None, 'simple', or 'full'")
     return diagnostics
 

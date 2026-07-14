@@ -180,7 +180,11 @@ def test_ndcombine_non_sigma_full_std_is_none():
     arr_nd, _ = _nd_stack()
 
     std = ndcombine(
-        arr_nd, combine="median", reject="minmax", n_minmax=(1, 1), full=True
+        arr_nd,
+        combine="median",
+        reject="minmax",
+        n_minmax=(1, 1),
+        diagnostics="simple",
     )[3]
 
     assert std is None
@@ -325,7 +329,11 @@ def test_ndcombine_nd_full_output_shapes():
     trailing = arr_nd.shape[1:]
 
     out, mask_rej, mask_thresh, std, low, upp, nit, output_flags = ndcombine(
-        arr_nd, combine="median", reject="sigclip", sigma=3.0, full=True
+        arr_nd,
+        combine="median",
+        reject="sigclip",
+        sigma=3.0,
+        diagnostics="simple",
     )
 
     assert out.shape == trailing

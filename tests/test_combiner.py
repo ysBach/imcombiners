@@ -46,7 +46,6 @@ def test_combiner_combine_accepts_inline_zero_scale_without_mutation():
         "mean",
         zero=np.array([10.0, 20.0, 40.0]),
         scale=np.array([1.0, 2.0, 4.0]),
-        full=False,
     )
     expected = (
         Combiner(arr)
@@ -79,7 +78,6 @@ def test_combiner_inline_zero_scale_statistics_follow_thresholds():
         thresholds=(-np.inf, 100.0),
         zero="mean",
         zero_to_0th=False,
-        full=False,
     )
     expected = (
         Combiner(arr)
@@ -103,7 +101,7 @@ def test_combiner_inline_zero_scale_full_true_mutates_like_chain():
         "mean",
         zero=np.array([10.0, 20.0, 40.0]),
         scale=np.array([1.0, 2.0, 4.0]),
-        full=True,
+        diagnostics="simple",
     )
     explicit = Combiner(arr).zero_scale(
         zero=np.array([10.0, 20.0, 40.0]),
@@ -134,7 +132,6 @@ def test_combiner_inline_zero_scale_preserves_fused_reject_path(monkeypatch):
         scale=np.arange(1.0, arr.shape[0] + 1.0, dtype=np.float32),
         scale_to_0th=False,
         rejectors=SigClip(sigma=3.0),
-        full=False,
     )
 
     assert called == {
@@ -466,7 +463,7 @@ def test_combiner_inline_rejectors_full_false_uses_fused(monkeypatch):
     monkeypatch.setattr(imc.kernels, "sigclip_combine", fake_fused, raising=False)
     monkeypatch.setattr(imc.kernels, "sigclip_mask", old_mask_path)
 
-    out = c.combine("median", rejectors=SigClip(sigma=3.0), full=False)
+    out = c.combine("median", rejectors=SigClip(sigma=3.0))
 
     assert called == {"shape": arr.shape, "combine": "median"}
     assert out.shape == arr.shape[1:]
@@ -480,7 +477,11 @@ def test_combiner_inline_rejectors_full_true_records_state():
     arr[0] = 1e3
     c = Combiner(arr)
 
-    out = c.combine("mean", rejectors=[MinMaxClip(n_min=0, n_max=1)], full=True)
+    out = c.combine(
+        "mean",
+        rejectors=[MinMaxClip(n_min=0, n_max=1)],
+        diagnostics="simple",
+    )
     expected = Combiner(arr).reject(MinMaxClip(n_min=0, n_max=1)).combine("mean")
 
     np.testing.assert_allclose(out, expected, rtol=1e-6, atol=1e-6)
@@ -561,7 +562,6 @@ def test_combiner_inline_pipeline_chains_thresholds_and_rejectors_without_mutati
         "mean",
         thresholds=[(0.0, np.inf), (-np.inf, 100.0)],
         rejectors=[MinMaxClip(n_min=0, n_max=1), SigClip(sigma=3.0)],
-        full=False,
     )
     expected = (
         Combiner(arr)
@@ -584,7 +584,6 @@ def test_combiner_inline_rejectors_full_false_falls_back_for_non_fused_combine()
     out = Combiner(arr).combine(
         "sum",
         rejectors=SigClip(sigma=3.0, maxiters=5, nkeep=1),
-        full=False,
     )
     expected = (
         Combiner(arr).reject(SigClip(sigma=3.0, maxiters=5, nkeep=1)).combine("sum")

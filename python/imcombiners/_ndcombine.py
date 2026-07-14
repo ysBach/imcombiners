@@ -112,8 +112,7 @@ def ndcombine(
     weight: np.ndarray | None = ...,
     revert_on_nkeep: bool = ...,
     grow: float | None = ...,
-    full: Literal[False] = ...,
-    diagnostics: Diagnostics = ...,
+    diagnostics: None = ...,
     scale_ref: float = ...,
     zero_ref: float = ...,
     validate: bool = ...,
@@ -148,8 +147,7 @@ def ndcombine(
     weight: np.ndarray | None = ...,
     revert_on_nkeep: bool = ...,
     grow: float | None = ...,
-    full: Literal[True] = ...,
-    diagnostics: None = ...,
+    diagnostics: Literal["simple"] = ...,
     scale_ref: float = ...,
     zero_ref: float = ...,
     validate: bool = ...,
@@ -184,7 +182,6 @@ def ndcombine(
     weight: np.ndarray | None = ...,
     revert_on_nkeep: bool = ...,
     grow: float | None = ...,
-    full: Literal[False] = ...,
     diagnostics: Literal["full"] = ...,
     scale_ref: float = ...,
     zero_ref: float = ...,
@@ -219,7 +216,6 @@ def ndcombine(
     weight: np.ndarray | None = None,
     revert_on_nkeep: bool = True,
     grow: float | None = None,
-    full: bool = False,
     diagnostics: Diagnostics = None,
     scale_ref: float = 1.0,
     zero_ref: float = 0.0,
@@ -334,8 +330,6 @@ def ndcombine(
         rejection. Axis 0 is the stack axis and is never grown across. `None`
         disables growth and skips the extra calculation. Growth applies only
         to samples rejected by `reject`, not to input masks or threshold masks.
-    full : bool, optional
-        Legacy alias for ``diagnostics="simple"``. Prefer `diagnostics`.
     diagnostics : {None, "simple", "full"}, optional
         Diagnostic product level. `None` returns only the combined image and
         keeps the fused output-only fast paths. `"simple"` returns the combined
@@ -353,7 +347,7 @@ def ndcombine(
     combined : ndarray, shape (*spatial)
         Combined image, returned when `diagnostics` is `None`.
     combined, mask_rej, mask_thresh, std, low, upp, nit, output_flags : tuple
-        Returned when ``diagnostics="simple"`` or legacy ``full=True``.
+        Returned when ``diagnostics="simple"``.
         Rejection diagnostics are `None` when `reject` is `None`; `mask_thresh`
         is `None` when `thresholds` is
         `None`. `mask_rej` and `mask_thresh` have shape ``(N, *spatial)``;
@@ -382,7 +376,7 @@ def ndcombine(
     orig_shape = arr.shape
     trailing = arr.shape[1:]
     grow = _validate_grow_value(grow, validate)
-    diagnostic_level = normalize_diagnostics(diagnostics, full)
+    diagnostic_level = normalize_diagnostics(diagnostics)
     want_diagnostics = diagnostic_level is not None
     want_sample_flags = diagnostic_level == "full"
     cb = combine.lower()

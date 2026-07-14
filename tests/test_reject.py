@@ -215,7 +215,7 @@ def test_sigclip_mad_stdfunc_uses_scaled_median_absolute_deviation():
     assert output_flags[0, 0] == 2
 
 
-def test_sigclip_mad_stdfunc_applies_ddof_scale_to_sigma_estimate():
+def test_sigclip_mad_stdfunc_ignores_ddof():
     arr = np.array([8.0, 9.0, 10.0, 11.0, 12.0, 100.0], dtype=np.float32).reshape(
         6, 1, 1
     )
@@ -232,8 +232,7 @@ def test_sigclip_mad_stdfunc_applies_ddof_scale_to_sigma_estimate():
     )
 
     base = 1.4826 * np.median(np.abs(arr[:, 0, 0] - np.median(arr[:, 0, 0])))
-    expected = base * np.sqrt(6.0 / 5.0)
-    np.testing.assert_allclose(std[0, 0], expected, rtol=1e-6)
+    np.testing.assert_allclose(std[0, 0], base, rtol=1e-6)
 
 
 def test_sigclip_rejects_unknown_stdfunc():
@@ -538,7 +537,7 @@ def test_ndcombine_grow_changes_only_neighbors_of_rejected_samples():
         ddof=0,
         nkeep=0,
         combine="mean",
-        full=True,
+        diagnostics="simple",
     )
     out_grow, mask_grow, _, _, _, _, _, code_grow = ndcombine(
         arr,
@@ -549,7 +548,7 @@ def test_ndcombine_grow_changes_only_neighbors_of_rejected_samples():
         nkeep=0,
         combine="mean",
         grow=1,
-        full=True,
+        diagnostics="simple",
     )
 
     assert mask_no_grow[:, 2, 2].sum() == 1

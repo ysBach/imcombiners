@@ -138,7 +138,7 @@ def _case(
         "imcombiners": {
             "combine": imc_combine,
             "reject": reject,
-            "full": True,
+            "diagnostics": "simple",
             **imc,
         },
     }

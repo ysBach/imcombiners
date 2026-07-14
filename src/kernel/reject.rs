@@ -711,7 +711,7 @@ fn col_nanmad_sigma_about<T: Float>(
     vals: &[T],
     mask: &[bool],
     center: T,
-    ddof: usize,
+    _ddof: usize,
     buf: &mut Vec<f64>,
 ) -> T {
     debug_assert_mask_covers_nonfinite(vals, mask);
@@ -725,15 +725,10 @@ fn col_nanmad_sigma_about<T: Float>(
             buf.push((x.to_f64() - center_f).abs());
         }
     }
-    let n = buf.len();
-    if n <= ddof {
+    if buf.is_empty() {
         return T::nan();
     }
-    let mut sigma = 1.4826 * median_valid_in_place(buf);
-    if ddof > 0 {
-        sigma *= (n as f64 / (n - ddof) as f64).sqrt();
-    }
-    T::from_f64(sigma)
+    T::from_f64(1.4826 * median_valid_in_place(buf))
 }
 
 #[inline]

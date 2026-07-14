@@ -75,7 +75,7 @@ def _write_fits(path: Path, data: np.ndarray | None) -> None:
 def _imc_output(case: dict[str, Any], data_root: Path) -> np.ndarray:
     stack = _load_stack(case, data_root)
     kwargs = dict(case["imcombiners"])
-    kwargs["full"] = False
+    kwargs["diagnostics"] = None
     mask_from = kwargs.pop("mask_from", None)
     if mask_from == "input_masks":
         kwargs["mask"] = _load_input_mask(case, data_root)
@@ -779,7 +779,7 @@ def main() -> None:
             "and the total elapsed time is divided by `--repeats`.",
             "- One-case rows: one CL file per case, same batched-repeat approach.",
             "- Timings include FITS input reads and combined FITS output writes; "
-            "IRAF diagnostics and `imc full=True` outputs are not timed.",
+            "IRAF and `imc` diagnostic outputs are not timed.",
         ]
     )
     report = "\n".join(sections)

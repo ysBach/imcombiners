@@ -78,7 +78,6 @@ Combiner.combine(
     scale_sigclip_kwargs=None,
     thresholds=None,
     rejectors=None,
-    full=False,
     diagnostics=None,
 )
 ```

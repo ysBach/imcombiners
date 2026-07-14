@@ -438,6 +438,9 @@ class Combiner:
         combiner : Combiner
             This object, after updating its working stack.
         """
+        if zero is None and scale is None:
+            return self
+
         arr_stat = (
             mask_as_nan(self.arr, self.mask) if self.mask is not None else self.arr
         )
@@ -632,7 +635,6 @@ class Combiner:
         scale_sigclip_kwargs: SigclipStatKwargs = None,
         thresholds: tuple[float, float] | Sequence[tuple[float, float]] | None = None,
         rejectors: Rejector | Sequence[Rejector] | None = None,
-        full: bool = False,
         diagnostics: Diagnostics = None,
     ) -> NDArray:
         """Combine the (possibly masked) stack along axis 0 and return the result.
@@ -685,8 +687,6 @@ class Combiner:
             Rejection steps to apply as part of this ``combine`` call.
             With ``diagnostics=None``, a single supported rejector may use a
             fused output-only kernel and no rejection diagnostics are stored.
-        full : bool, optional
-            Legacy alias for ``diagnostics="simple"``.
         diagnostics : {None, "simple", "full"}, optional
             Diagnostic level for this ``combine`` call. `None` returns only the
             combined image without mutating state. `"simple"` applies
@@ -702,7 +702,7 @@ class Combiner:
         """
         threshold_steps = _normalize_threshold_steps(thresholds)
         rejector_steps = _normalize_rejector_steps(rejectors)
-        diagnostic_level = normalize_diagnostics(diagnostics, full)
+        diagnostic_level = normalize_diagnostics(diagnostics)
         if threshold_steps or rejector_steps or zero is not None or scale is not None:
             return self._combine_call_pipeline(
                 method,
@@ -786,16 +786,20 @@ class Combiner:
             if mask_thresh is not None:
                 mask = mask_thresh if mask is None else (mask | mask_thresh)
 
-        arr = _apply_zero_scale(
-            self.arr,
-            zero,
-            scale,
-            mask=mask,
-            zero_to_0th=zero_to_0th,
-            scale_to_0th=scale_to_0th,
-            zero_sigclip_kwargs=zero_sigclip_kwargs,
-            scale_sigclip_kwargs=scale_sigclip_kwargs,
-            validate=self._validate,
+        arr = (
+            self.arr
+            if zero is None and scale is None
+            else _apply_zero_scale(
+                self.arr,
+                zero,
+                scale,
+                mask=mask,
+                zero_to_0th=zero_to_0th,
+                scale_to_0th=scale_to_0th,
+                zero_sigclip_kwargs=zero_sigclip_kwargs,
+                scale_sigclip_kwargs=scale_sigclip_kwargs,
+                validate=self._validate,
+            )
         )
 
         if len(rejectors) == 1 and weight is None:
