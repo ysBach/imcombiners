@@ -328,9 +328,9 @@ fn make_sigclip_params(
         ccdclip: false,
         rdnoise_ref: 0.0,
         snoise_ref: 0.0,
-        scale_ref: 1.0,
-        zero_ref: 0.0,
-        rejection_gain: 1.0,
+        scales: Vec::new(),
+        zeros: Vec::new(),
+        gain_ref: 1.0,
     })
 }
 
@@ -348,8 +348,8 @@ fn make_ccdclip_params(
     revert_on_nkeep: bool,
     rdnoise_ref: f64,
     snoise_ref: f64,
-    scale_ref: f64,
-    zero_ref: f64,
+    scales: Option<Vec<f64>>,
+    zeros: Option<Vec<f64>>,
     gain: f64,
     validate: bool,
 ) -> PyResult<SigClipParams> {
@@ -357,6 +357,28 @@ fn make_ccdclip_params(
     if validate && (!gain.is_finite() || gain <= 0.0) {
         return Err(PyValueError::new_err("gain must be finite and positive"));
     }
+    let scales = scales.unwrap_or_else(|| vec![1.0; n]);
+    let zeros = zeros.unwrap_or_else(|| vec![0.0; n]);
+    if validate {
+        if scales.len() != n || zeros.len() != n {
+            return Err(PyValueError::new_err(
+                "scales/zeros must have one value per image plane",
+            ));
+        }
+        if scales
+            .iter()
+            .any(|&value| !value.is_finite() || value <= 0.0)
+        {
+            return Err(PyValueError::new_err("scales must be finite and positive"));
+        }
+        if zeros.iter().any(|&value| !value.is_finite()) {
+            return Err(PyValueError::new_err("zeros must be finite"));
+        }
+    }
+    let use_scaling = scales
+        .iter()
+        .zip(&zeros)
+        .any(|(&scale, &zero)| scale != 1.0 || zero != 0.0);
     Ok(SigClipParams {
         sigma_lower,
         sigma_upper,
@@ -371,9 +393,9 @@ fn make_ccdclip_params(
         ccdclip: true,
         rdnoise_ref,
         snoise_ref,
-        scale_ref,
-        zero_ref,
-        rejection_gain: gain,
+        scales: if use_scaling { scales } else { Vec::new() },
+        zeros: if use_scaling { zeros } else { Vec::new() },
+        gain_ref: gain,
     })
 }
 
@@ -505,8 +527,8 @@ fn sigclip_1d<'py>(
     revert_on_nkeep = true,
     rdnoise_ref = 0.0,
     snoise_ref = 0.0,
-    scale_ref = 1.0,
-    zero_ref = 0.0,
+    scales = None,
+    zeros = None,
     gain = 1.0,
     validate = true,
 ))]
@@ -525,8 +547,8 @@ fn ccdclip<'py>(
     revert_on_nkeep: bool,
     rdnoise_ref: f64,
     snoise_ref: f64,
-    scale_ref: f64,
-    zero_ref: f64,
+    scales: Option<Vec<f64>>,
+    zeros: Option<Vec<f64>>,
     gain: f64,
     validate: bool,
 ) -> PyResult<Bound<'py, PyTuple>> {
@@ -544,8 +566,8 @@ fn ccdclip<'py>(
         revert_on_nkeep,
         rdnoise_ref,
         snoise_ref,
-        scale_ref,
-        zero_ref,
+        scales,
+        zeros,
         gain,
         validate,
     )?;
@@ -569,8 +591,8 @@ fn ccdclip<'py>(
     revert_on_nkeep = true,
     rdnoise_ref = 0.0,
     snoise_ref = 0.0,
-    scale_ref = 1.0,
-    zero_ref = 0.0,
+    scales = None,
+    zeros = None,
     gain = 1.0,
     validate = true,
 ))]
@@ -589,8 +611,8 @@ fn ccdclip_1d<'py>(
     revert_on_nkeep: bool,
     rdnoise_ref: f64,
     snoise_ref: f64,
-    scale_ref: f64,
-    zero_ref: f64,
+    scales: Option<Vec<f64>>,
+    zeros: Option<Vec<f64>>,
     gain: f64,
     validate: bool,
 ) -> PyResult<Bound<'py, PyTuple>> {
@@ -608,8 +630,8 @@ fn ccdclip_1d<'py>(
         revert_on_nkeep,
         rdnoise_ref,
         snoise_ref,
-        scale_ref,
-        zero_ref,
+        scales,
+        zeros,
         gain,
         validate,
     )?;
@@ -691,8 +713,8 @@ fn sigclip_restored_flags<'py>(
     revert_on_nkeep = true,
     rdnoise_ref = 0.0,
     snoise_ref = 0.0,
-    scale_ref = 1.0,
-    zero_ref = 0.0,
+    scales = None,
+    zeros = None,
     gain = 1.0,
     validate = true,
 ))]
@@ -711,8 +733,8 @@ fn ccdclip_restored_flags<'py>(
     revert_on_nkeep: bool,
     rdnoise_ref: f64,
     snoise_ref: f64,
-    scale_ref: f64,
-    zero_ref: f64,
+    scales: Option<Vec<f64>>,
+    zeros: Option<Vec<f64>>,
     gain: f64,
     validate: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -730,8 +752,8 @@ fn ccdclip_restored_flags<'py>(
         revert_on_nkeep,
         rdnoise_ref,
         snoise_ref,
-        scale_ref,
-        zero_ref,
+        scales,
+        zeros,
         gain,
         validate,
     )?;
@@ -1071,8 +1093,8 @@ fn sigclip_median_1d<'py>(
     revert_on_nkeep = true,
     rdnoise_ref = 0.0,
     snoise_ref = 0.0,
-    scale_ref = 1.0,
-    zero_ref = 0.0,
+    scales = None,
+    zeros = None,
     gain = 1.0,
     validate = true,
 ))]
@@ -1091,8 +1113,8 @@ fn ccdclip_mask<'py>(
     revert_on_nkeep: bool,
     rdnoise_ref: f64,
     snoise_ref: f64,
-    scale_ref: f64,
-    zero_ref: f64,
+    scales: Option<Vec<f64>>,
+    zeros: Option<Vec<f64>>,
     gain: f64,
     validate: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -1110,8 +1132,8 @@ fn ccdclip_mask<'py>(
         revert_on_nkeep,
         rdnoise_ref,
         snoise_ref,
-        scale_ref,
-        zero_ref,
+        scales,
+        zeros,
         gain,
         validate,
     )?;
@@ -1135,8 +1157,8 @@ fn ccdclip_mask<'py>(
     revert_on_nkeep = true,
     rdnoise_ref = 0.0,
     snoise_ref = 0.0,
-    scale_ref = 1.0,
-    zero_ref = 0.0,
+    scales = None,
+    zeros = None,
     gain = 1.0,
     validate = true,
 ))]
@@ -1155,8 +1177,8 @@ fn ccdclip_mask_1d<'py>(
     revert_on_nkeep: bool,
     rdnoise_ref: f64,
     snoise_ref: f64,
-    scale_ref: f64,
-    zero_ref: f64,
+    scales: Option<Vec<f64>>,
+    zeros: Option<Vec<f64>>,
     gain: f64,
     validate: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -1174,8 +1196,8 @@ fn ccdclip_mask_1d<'py>(
         revert_on_nkeep,
         rdnoise_ref,
         snoise_ref,
-        scale_ref,
-        zero_ref,
+        scales,
+        zeros,
         gain,
         validate,
     )?;
@@ -1206,8 +1228,8 @@ fn ccdclip_mask_1d<'py>(
     revert_on_nkeep = true,
     rdnoise_ref = 0.0,
     snoise_ref = 0.0,
-    scale_ref = 1.0,
-    zero_ref = 0.0,
+    scales = None,
+    zeros = None,
     gain = 1.0,
     validate = true,
 ))]
@@ -1226,8 +1248,8 @@ fn ccdclip_mean<'py>(
     revert_on_nkeep: bool,
     rdnoise_ref: f64,
     snoise_ref: f64,
-    scale_ref: f64,
-    zero_ref: f64,
+    scales: Option<Vec<f64>>,
+    zeros: Option<Vec<f64>>,
     gain: f64,
     validate: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -1245,8 +1267,8 @@ fn ccdclip_mean<'py>(
         revert_on_nkeep,
         rdnoise_ref,
         snoise_ref,
-        scale_ref,
-        zero_ref,
+        scales,
+        zeros,
         gain,
         validate,
     )?;
@@ -1254,8 +1276,8 @@ fn ccdclip_mean<'py>(
         py,
         arr,
         mask,
-        |v, m| k_ccdclip_mean(&v, m, &params, gain),
-        |v, m| k_ccdclip_mean(&v, m, &params, gain),
+        |v, m| k_ccdclip_mean(&v, m, &params),
+        |v, m| k_ccdclip_mean(&v, m, &params),
         validate,
     )
 }
@@ -1277,8 +1299,8 @@ fn ccdclip_mean<'py>(
     revert_on_nkeep = true,
     rdnoise_ref = 0.0,
     snoise_ref = 0.0,
-    scale_ref = 1.0,
-    zero_ref = 0.0,
+    scales = None,
+    zeros = None,
     gain = 1.0,
     validate = true,
 ))]
@@ -1296,8 +1318,8 @@ fn ccdclip_mean_1d<'py>(
     revert_on_nkeep: bool,
     rdnoise_ref: f64,
     snoise_ref: f64,
-    scale_ref: f64,
-    zero_ref: f64,
+    scales: Option<Vec<f64>>,
+    zeros: Option<Vec<f64>>,
     gain: f64,
     validate: bool,
 ) -> PyResult<f64> {
@@ -1315,16 +1337,16 @@ fn ccdclip_mean_1d<'py>(
         revert_on_nkeep,
         rdnoise_ref,
         snoise_ref,
-        scale_ref,
-        zero_ref,
+        scales,
+        zeros,
         gain,
         validate,
     )?;
     dispatch_rejection_combine_1d(
         values,
         mask,
-        |v, m| k_ccdclip_mean_1d(v, m, &params, gain),
-        |v, m| k_ccdclip_mean_1d(v, m, &params, gain),
+        |v, m| k_ccdclip_mean_1d(v, m, &params),
+        |v, m| k_ccdclip_mean_1d(v, m, &params),
         validate,
     )
 }
@@ -1346,8 +1368,8 @@ fn ccdclip_mean_1d<'py>(
     revert_on_nkeep = true,
     rdnoise_ref = 0.0,
     snoise_ref = 0.0,
-    scale_ref = 1.0,
-    zero_ref = 0.0,
+    scales = None,
+    zeros = None,
     gain = 1.0,
     validate = true,
 ))]
@@ -1366,8 +1388,8 @@ fn ccdclip_median<'py>(
     revert_on_nkeep: bool,
     rdnoise_ref: f64,
     snoise_ref: f64,
-    scale_ref: f64,
-    zero_ref: f64,
+    scales: Option<Vec<f64>>,
+    zeros: Option<Vec<f64>>,
     gain: f64,
     validate: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -1385,8 +1407,8 @@ fn ccdclip_median<'py>(
         revert_on_nkeep,
         rdnoise_ref,
         snoise_ref,
-        scale_ref,
-        zero_ref,
+        scales,
+        zeros,
         gain,
         validate,
     )?;
@@ -1394,8 +1416,8 @@ fn ccdclip_median<'py>(
         py,
         arr,
         mask,
-        |v, m| k_ccdclip_median(&v, m, &params, gain),
-        |v, m| k_ccdclip_median(&v, m, &params, gain),
+        |v, m| k_ccdclip_median(&v, m, &params),
+        |v, m| k_ccdclip_median(&v, m, &params),
         validate,
     )
 }
@@ -1417,8 +1439,8 @@ fn ccdclip_median<'py>(
     revert_on_nkeep = true,
     rdnoise_ref = 0.0,
     snoise_ref = 0.0,
-    scale_ref = 1.0,
-    zero_ref = 0.0,
+    scales = None,
+    zeros = None,
     gain = 1.0,
     validate = true,
 ))]
@@ -1436,8 +1458,8 @@ fn ccdclip_median_1d<'py>(
     revert_on_nkeep: bool,
     rdnoise_ref: f64,
     snoise_ref: f64,
-    scale_ref: f64,
-    zero_ref: f64,
+    scales: Option<Vec<f64>>,
+    zeros: Option<Vec<f64>>,
     gain: f64,
     validate: bool,
 ) -> PyResult<f64> {
@@ -1455,16 +1477,16 @@ fn ccdclip_median_1d<'py>(
         revert_on_nkeep,
         rdnoise_ref,
         snoise_ref,
-        scale_ref,
-        zero_ref,
+        scales,
+        zeros,
         gain,
         validate,
     )?;
     dispatch_rejection_combine_1d(
         values,
         mask,
-        |v, m| k_ccdclip_median_1d(v, m, &params, gain),
-        |v, m| k_ccdclip_median_1d(v, m, &params, gain),
+        |v, m| k_ccdclip_median_1d(v, m, &params),
+        |v, m| k_ccdclip_median_1d(v, m, &params),
         validate,
     )
 }

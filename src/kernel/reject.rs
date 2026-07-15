@@ -178,9 +178,12 @@ pub struct SigClipParams {
     pub ccdclip: bool,
     pub rdnoise_ref: f64,
     pub snoise_ref: f64,
-    pub scale_ref: f64,
-    pub zero_ref: f64,
-    pub rejection_gain: f64,
+    /// Per-image factors satisfying ``inputdata = scale_factor *
+    /// (normalized + noise_zero)``. Empty together with `zeros` selects
+    /// IRAF's unscaled noise branch.
+    pub scales: Vec<f64>,
+    pub zeros: Vec<f64>,
+    pub gain_ref: f64,
 }
 
 pub struct LinearClipParams {
@@ -593,6 +596,7 @@ enum FinalCombineKind {
 struct SigClipPixelScratch {
     mask: Vec<bool>,
     newly_masked: Vec<usize>,
+    sorted: Vec<(f64, usize)>,
 }
 
 impl SigClipPixelScratch {
@@ -600,7 +604,27 @@ impl SigClipPixelScratch {
         Self {
             mask: Vec::new(),
             newly_masked: Vec::new(),
+            sorted: Vec::new(),
         }
+    }
+}
+
+/// IRAF ccdclip noise sigma for one image plane.
+///
+/// `iccclip.x` evaluates the model in pre-normalization input DN and divides
+/// the result by the plane scale to compare with normalized data. `icomb.x` floors the
+/// read-noise variance at a positive f32-scale value.
+#[inline]
+fn ccdclip_sample_sigma(p: &SigClipParams, center: f64, i: usize) -> f64 {
+    const NM1_FLOOR: f64 = 1e4 / 3.402_823_466e38;
+    let read_variance = (p.rdnoise_ref / p.gain_ref).powi(2).max(NM1_FLOOR);
+    if p.scales.is_empty() {
+        let signal = center.max(0.0);
+        (read_variance + signal / p.gain_ref + (signal * p.snoise_ref).powi(2)).sqrt()
+    } else {
+        let scale = p.scales[i];
+        let signal = (scale * (center + p.zeros[i])).max(0.0);
+        (read_variance + signal / p.gain_ref + (signal * p.snoise_ref).powi(2)).sqrt() / scale
     }
 }
 
@@ -932,26 +956,64 @@ fn sigclip_pixel<T: Float>(
         std_out = std;
 
         let center = cen.to_f64();
-        let lower_limit_sq = p.sigma_lower * p.sigma_lower * spread_sq;
-        let upper_limit_sq = p.sigma_upper * p.sigma_upper * spread_sq;
         // Tentatively reject out-of-bounds; track new finite count.
-        let mut n_finite_new = 0usize;
         // We'll need to roll back if nkeep/maxrej limits trip; so save current mask + bounds.
         scratch.newly_masked.clear();
-        for i in 0..n {
-            if !mask[i] {
-                let delta = col[i].to_f64() - center;
-                let delta_sq = delta * delta;
-                if (delta < 0.0 && delta_sq > lower_limit_sq)
-                    || (delta > 0.0 && delta_sq > upper_limit_sq)
-                {
-                    mask[i] = true;
-                    scratch.newly_masked.push(i);
-                } else {
-                    n_finite_new += 1;
+        let n_finite_new = if p.ccdclip {
+            // IRAF scans the value-sorted retained window from each end and
+            // stops that side at the first sample within its own noise sigma.
+            scratch.sorted.clear();
+            scratch
+                .sorted
+                .extend((0..n).filter(|&i| !mask[i]).map(|i| (col[i].to_f64(), i)));
+            scratch.sorted.sort_unstable_by(|a, b| {
+                a.0.partial_cmp(&b.0)
+                    .expect("unmasked ccdclip samples must be finite")
+                    .then(a.1.cmp(&b.1))
+            });
+            let mut lo = 0usize;
+            let mut hi = scratch.sorted.len();
+            while lo < hi {
+                let (value, i) = scratch.sorted[lo];
+                let residual = (center - value) / ccdclip_sample_sigma(p, center, i);
+                if residual <= p.sigma_lower {
+                    break;
+                }
+                mask[i] = true;
+                scratch.newly_masked.push(i);
+                lo += 1;
+            }
+            while hi > lo {
+                let (value, i) = scratch.sorted[hi - 1];
+                let residual = (value - center) / ccdclip_sample_sigma(p, center, i);
+                if residual <= p.sigma_upper {
+                    break;
+                }
+                mask[i] = true;
+                scratch.newly_masked.push(i);
+                hi -= 1;
+            }
+            n_finite_old - scratch.newly_masked.len()
+        } else {
+            let lower_limit_sq = p.sigma_lower * p.sigma_lower * spread_sq;
+            let upper_limit_sq = p.sigma_upper * p.sigma_upper * spread_sq;
+            let mut kept = 0usize;
+            for i in 0..n {
+                if !mask[i] {
+                    let delta = col[i].to_f64() - center;
+                    let delta_sq = delta * delta;
+                    if (delta < 0.0 && delta_sq > lower_limit_sq)
+                        || (delta > 0.0 && delta_sq > upper_limit_sq)
+                    {
+                        mask[i] = true;
+                        scratch.newly_masked.push(i);
+                    } else {
+                        kept += 1;
+                    }
                 }
             }
-        }
+            kept
+        };
 
         if unbounded {
             let n_change = n_finite_old - n_finite_new;
@@ -1084,8 +1146,11 @@ fn clipping_center_and_spread<T: Float>(
             (T::nan(), f64::NAN)
         } else {
             let c = std_center.to_f64();
-            let v = (1.0 + p.snoise_ref) * (c + p.zero_ref).abs() * p.scale_ref
-                + p.rdnoise_ref * p.rdnoise_ref;
+            const NM1_FLOOR: f64 = 1e4 / 3.402_823_466e38;
+            let signal = c.max(0.0);
+            let v = (p.rdnoise_ref / p.gain_ref).powi(2).max(NM1_FLOOR)
+                + signal / p.gain_ref
+                + (signal * p.snoise_ref).powi(2);
             let std = if diagnostics {
                 T::from_f64(v.sqrt())
             } else {
@@ -1179,16 +1244,6 @@ pub fn sigclip_1d<T: Float>(
     p: &SigClipParams,
 ) -> RejectOutput1d<T> {
     let n = values.len();
-    let reject_values;
-    let col = if p.ccdclip && p.rejection_gain != 1.0 {
-        reject_values = values
-            .iter()
-            .map(|&value| T::from_f64(value.to_f64() / p.rejection_gain))
-            .collect::<Vec<_>>();
-        &reject_values[..]
-    } else {
-        values
-    };
     let no_mask;
     let mask = if let Some(mask) = mask_in {
         mask
@@ -1200,7 +1255,7 @@ pub fn sigclip_1d<T: Float>(
     let mut buf = Vec::<f64>::with_capacity(n);
     let mut scratch = SigClipPixelScratch::new();
     let px = sigclip_pixel(
-        col,
+        values,
         mask,
         p,
         true,
@@ -1282,7 +1337,6 @@ fn sigclip_final_combine<T: Float>(
     mask_in: Option<&ArrayView3<bool>>,
     p: &SigClipParams,
     kind: FinalCombineKind,
-    rejection_gain: f64,
 ) -> Array2<T> {
     let (n, h, w) = (arr.shape()[0], arr.shape()[1], arr.shape()[2]);
     let hw = h * w;
@@ -1297,11 +1351,7 @@ fn sigclip_final_combine<T: Float>(
         for k in 0..n {
             let source = data[raw_idx];
             scratch.source_col[k] = source;
-            scratch.reject_col[k] = if rejection_gain == 1.0 {
-                source
-            } else {
-                T::from_f64(source.to_f64() / rejection_gain)
-            };
+            scratch.reject_col[k] = source;
             scratch.mask_in_col[k] = mask_data.is_some_and(|m| m[raw_idx]);
             raw_idx += hw;
         }
@@ -1323,7 +1373,7 @@ fn sigclip_final_combine<T: Float>(
         )
     };
 
-    let reject_kind = if p.ccdclip || rejection_gain != 1.0 {
+    let reject_kind = if p.ccdclip {
         RejectKind::CcdClip
     } else {
         RejectKind::SigClip
@@ -1352,7 +1402,7 @@ pub fn sigclip_mean<T: Float>(
     mask_in: Option<&ArrayView3<bool>>,
     p: &SigClipParams,
 ) -> Array2<T> {
-    sigclip_final_combine(arr, mask_in, p, FinalCombineKind::Mean, 1.0)
+    sigclip_final_combine(arr, mask_in, p, FinalCombineKind::Mean)
 }
 
 pub fn sigclip_median<T: Float>(
@@ -1360,25 +1410,23 @@ pub fn sigclip_median<T: Float>(
     mask_in: Option<&ArrayView3<bool>>,
     p: &SigClipParams,
 ) -> Array2<T> {
-    sigclip_final_combine(arr, mask_in, p, FinalCombineKind::Median, 1.0)
+    sigclip_final_combine(arr, mask_in, p, FinalCombineKind::Median)
 }
 
 pub fn ccdclip_mean<T: Float>(
     arr: &ArrayView3<T>,
     mask_in: Option<&ArrayView3<bool>>,
     p: &SigClipParams,
-    gain: f64,
 ) -> Array2<T> {
-    sigclip_final_combine(arr, mask_in, p, FinalCombineKind::Mean, gain)
+    sigclip_final_combine(arr, mask_in, p, FinalCombineKind::Mean)
 }
 
 pub fn ccdclip_median<T: Float>(
     arr: &ArrayView3<T>,
     mask_in: Option<&ArrayView3<bool>>,
     p: &SigClipParams,
-    gain: f64,
 ) -> Array2<T> {
-    sigclip_final_combine(arr, mask_in, p, FinalCombineKind::Median, gain)
+    sigclip_final_combine(arr, mask_in, p, FinalCombineKind::Median)
 }
 
 fn sigclip_final_combine_1d<T: Float>(
@@ -1386,7 +1434,6 @@ fn sigclip_final_combine_1d<T: Float>(
     mask_in: Option<&[bool]>,
     p: &SigClipParams,
     kind: FinalCombineKind,
-    rejection_gain: f64,
 ) -> T {
     let n = values.len();
     let no_mask;
@@ -1397,20 +1444,12 @@ fn sigclip_final_combine_1d<T: Float>(
         &no_mask
     };
 
-    let mut reject_col = vec![T::zero(); n];
     let mut out_mask = vec![false; n];
-    for (i, &source) in values.iter().enumerate() {
-        reject_col[i] = if rejection_gain == 1.0 {
-            source
-        } else {
-            T::from_f64(source.to_f64() / rejection_gain)
-        };
-    }
 
     let mut stat_buf = Vec::<f64>::with_capacity(n);
     let mut pixel_scratch = SigClipPixelScratch::new();
     sigclip_pixel(
-        &reject_col,
+        values,
         mask,
         p,
         false,
@@ -1423,29 +1462,19 @@ fn sigclip_final_combine_1d<T: Float>(
 }
 
 pub fn sigclip_mean_1d<T: Float>(values: &[T], mask_in: Option<&[bool]>, p: &SigClipParams) -> T {
-    sigclip_final_combine_1d(values, mask_in, p, FinalCombineKind::Mean, 1.0)
+    sigclip_final_combine_1d(values, mask_in, p, FinalCombineKind::Mean)
 }
 
 pub fn sigclip_median_1d<T: Float>(values: &[T], mask_in: Option<&[bool]>, p: &SigClipParams) -> T {
-    sigclip_final_combine_1d(values, mask_in, p, FinalCombineKind::Median, 1.0)
+    sigclip_final_combine_1d(values, mask_in, p, FinalCombineKind::Median)
 }
 
-pub fn ccdclip_mean_1d<T: Float>(
-    values: &[T],
-    mask_in: Option<&[bool]>,
-    p: &SigClipParams,
-    gain: f64,
-) -> T {
-    sigclip_final_combine_1d(values, mask_in, p, FinalCombineKind::Mean, gain)
+pub fn ccdclip_mean_1d<T: Float>(values: &[T], mask_in: Option<&[bool]>, p: &SigClipParams) -> T {
+    sigclip_final_combine_1d(values, mask_in, p, FinalCombineKind::Mean)
 }
 
-pub fn ccdclip_median_1d<T: Float>(
-    values: &[T],
-    mask_in: Option<&[bool]>,
-    p: &SigClipParams,
-    gain: f64,
-) -> T {
-    sigclip_final_combine_1d(values, mask_in, p, FinalCombineKind::Median, gain)
+pub fn ccdclip_median_1d<T: Float>(values: &[T], mask_in: Option<&[bool]>, p: &SigClipParams) -> T {
+    sigclip_final_combine_1d(values, mask_in, p, FinalCombineKind::Median)
 }
 
 pub fn sigclip_restored_flags<T: Float>(
@@ -1465,12 +1494,7 @@ pub fn sigclip_restored_flags<T: Float>(
         scratch.ensure_len(n);
         let mut raw_idx = idx;
         for k in 0..n {
-            let value = data[raw_idx];
-            scratch.col[k] = if p.ccdclip && p.rejection_gain != 1.0 {
-                T::from_f64(value.to_f64() / p.rejection_gain)
-            } else {
-                value
-            };
+            scratch.col[k] = data[raw_idx];
             scratch.mask_in_col[k] = mask_data.is_some_and(|m| m[raw_idx]);
             raw_idx += hw;
         }
@@ -1559,12 +1583,7 @@ fn sigclip_impl<T: Float>(
         scratch.ensure_len(n);
         let mut raw_idx = idx;
         for k in 0..n {
-            let value = data[raw_idx];
-            scratch.col[k] = if p.ccdclip && p.rejection_gain != 1.0 {
-                T::from_f64(value.to_f64() / p.rejection_gain)
-            } else {
-                value
-            };
+            scratch.col[k] = data[raw_idx];
             scratch.mask_in_col[k] = mask_data.is_some_and(|m| m[raw_idx]);
             raw_idx += hw;
         }

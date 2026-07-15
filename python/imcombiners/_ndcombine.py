@@ -39,8 +39,8 @@ def _apply_zero_scale(
     scale_sigclip_kwargs: SigclipStatKwargs = None,
     mask: np.ndarray | None = None,
     validate: bool = True,
-) -> np.ndarray:
-    """Apply zero subtraction and scale division to a stack."""
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None]:
+    """Apply normalization and return its resolved zero/scale vectors."""
     out = arr
     copied = False
     arr_stat = mask_as_nan(arr, mask) if mask is not None else arr
@@ -71,7 +71,11 @@ def _apply_zero_scale(
         )
         out = (out if copied else arr.copy()) / s
         copied = True
-    return out if copied else arr.copy()
+    return (
+        out if copied else arr.copy(),
+        z if zero is not None else None,
+        s if scale is not None else None,
+    )
 
 
 def _validate_grow_value(grow: float | None, validate: bool) -> float | None:
@@ -113,8 +117,7 @@ def ndcombine(
     revert_on_nkeep: bool = ...,
     grow: float | None = ...,
     diagnostics: None = ...,
-    scale_ref: float = ...,
-    zero_ref: float = ...,
+    sigscale: float = ...,
     validate: bool = ...,
 ) -> np.ndarray: ...
 
@@ -148,8 +151,7 @@ def ndcombine(
     revert_on_nkeep: bool = ...,
     grow: float | None = ...,
     diagnostics: Literal["simple"] = ...,
-    scale_ref: float = ...,
-    zero_ref: float = ...,
+    sigscale: float = ...,
     validate: bool = ...,
 ) -> FullCombineResult: ...
 
@@ -183,8 +185,7 @@ def ndcombine(
     revert_on_nkeep: bool = ...,
     grow: float | None = ...,
     diagnostics: Literal["full"] = ...,
-    scale_ref: float = ...,
-    zero_ref: float = ...,
+    sigscale: float = ...,
     validate: bool = ...,
 ) -> FullDiagnosticCombineResult: ...
 
@@ -217,8 +218,7 @@ def ndcombine(
     revert_on_nkeep: bool = True,
     grow: float | None = None,
     diagnostics: Diagnostics = None,
-    scale_ref: float = 1.0,
-    zero_ref: float = 0.0,
+    sigscale: float = 0.1,
     validate: bool = True,
 ) -> np.ndarray | FullCombineResult | FullDiagnosticCombineResult:
     """Combine an image stack with optional normalization and rejection.
@@ -286,8 +286,11 @@ def ndcombine(
         Values greater than or equal to 1 are frame counts; values in `[0, 1)`
         are fractions of the original stack size.
     rdnoise, gain, snoise : float, optional
-        CCD noise-model parameters used by `"ccdclip"`. `gain` must be finite
-        and positive when validation is enabled.
+        CCD noise-model parameters used by `"ccdclip"`. `snoise` is the
+        fractional sensitivity-noise coefficient: it models multiplicative
+        sensitivity uncertainty, such as flat-field noise, through the
+        ``(snoise * signal)^2`` variance term. `gain` must be finite and
+        positive when validation is enabled.
     pclip : float, optional
         IRAF-style pclip rank offset. Values with ``abs(pclip) < 1`` are
         converted to an integer offset using half of the input image count.
@@ -335,8 +338,10 @@ def ndcombine(
         keeps the fused output-only fast paths. `"simple"` returns the combined
         image plus the existing per-output-element diagnostics. `"full"` returns the
         `"simple"` products plus a stack-shaped `uint8` `sample_flags` array.
-    scale_ref, zero_ref : float, optional
-        Reference scale and zero-point parameters for `"ccdclip"`.
+    sigscale : float, optional
+        IRAF scale gate for `"ccdclip"` noise corrections. Resolved per-image
+        zero/scale vectors are used only when a scale differs from one by more
+        than `sigscale`; `0.0` disables the correction.
     validate : bool, optional
         If `True`, validate public-boundary inputs. If `False`, callers must
         provide arrays with correct dimensionality, contiguity, dtype, mask
@@ -416,8 +421,8 @@ def ndcombine(
         if mask is None
         else (mask | mask_thresh if mask_thresh is not None else mask)
     )
-    arr_zs = (
-        _apply_zero_scale(
+    if zero is not None or scale is not None:
+        arr_zs, z_vec, s_vec = _apply_zero_scale(
             arr,
             zero,
             scale,
@@ -428,9 +433,8 @@ def ndcombine(
             mask=mask_pre,
             validate=validate,
         )
-        if (zero is not None or scale is not None)
-        else arr
-    )
+    else:
+        arr_zs, z_vec, s_vec = arr, None, None
     # (when validate=False the caller is responsible for supplying compatible inputs)
 
     mask_rej = low = upp = nit = output_flags = std = sample_flags = None
@@ -568,6 +572,46 @@ def ndcombine(
                 )
         elif rj == "ccdclip":
             gain = validate_positive_scalar("gain", gain) if validate else float(gain)
+            if validate and (not np.isfinite(sigscale) or sigscale < 0.0):
+                raise ValueError("sigscale must be finite and non-negative")
+            ccd_scales = ccd_zeros = None
+            if z_vec is not None or s_vec is not None:
+                n = arr_zs.shape[0]
+                scales = (
+                    np.ones(n, dtype=np.float64)
+                    if s_vec is None
+                    else (
+                        np.full(
+                            n,
+                            np.asarray(s_vec, dtype=np.float64).item(),
+                            dtype=np.float64,
+                        )
+                        if np.asarray(s_vec).size == 1
+                        else np.asarray(s_vec, dtype=np.float64).reshape(n, -1)[:, 0]
+                    )
+                )
+                zeros = (
+                    np.zeros(n, dtype=np.float64)
+                    if z_vec is None
+                    else (
+                        np.full(
+                            n,
+                            np.asarray(z_vec, dtype=np.float64).item(),
+                            dtype=np.float64,
+                        )
+                        if np.asarray(z_vec).size == 1
+                        else np.asarray(z_vec, dtype=np.float64).reshape(n, -1)[:, 0]
+                    )
+                )
+                doscale = bool(np.any(scales != scales[0]))
+                doscale1 = bool(
+                    doscale
+                    and sigscale != 0.0
+                    and np.any(np.abs(scales - 1.0) > sigscale)
+                )
+                if doscale1:
+                    ccd_scales = scales
+                    ccd_zeros = zeros / scales
             if (
                 not want_diagnostics
                 and cb in ("mean", "average", "avg", "median", "med")
@@ -589,8 +633,8 @@ def ndcombine(
                     rdnoise=rdnoise,
                     gain=gain,
                     snoise=snoise,
-                    scale_ref=scale_ref,
-                    zero_ref=zero_ref,
+                    scales=ccd_scales,
+                    zeros=ccd_zeros,
                     validate=validate,
                 ).reshape(trailing)
             if want_diagnostics:
@@ -608,8 +652,8 @@ def ndcombine(
                     rdnoise=rdnoise,
                     gain=gain,
                     snoise=snoise,
-                    scale_ref=scale_ref,
-                    zero_ref=zero_ref,
+                    scales=ccd_scales,
+                    zeros=ccd_zeros,
                     validate=validate,
                 )
                 if want_sample_flags:
@@ -627,8 +671,8 @@ def ndcombine(
                         rdnoise=rdnoise,
                         gain=gain,
                         snoise=snoise,
-                        scale_ref=scale_ref,
-                        zero_ref=zero_ref,
+                        scales=ccd_scales,
+                        zeros=ccd_zeros,
                         validate=validate,
                     )
             else:
@@ -646,8 +690,8 @@ def ndcombine(
                     rdnoise=rdnoise,
                     gain=gain,
                     snoise=snoise,
-                    scale_ref=scale_ref,
-                    zero_ref=zero_ref,
+                    scales=ccd_scales,
+                    zeros=ccd_zeros,
                     grow=grow,
                     validate=validate,
                 )

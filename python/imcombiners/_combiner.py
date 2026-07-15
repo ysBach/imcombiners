@@ -140,8 +140,8 @@ def _apply_zero_scale(
     zero_sigclip_kwargs: SigclipStatKwargs,
     scale_sigclip_kwargs: SigclipStatKwargs,
     validate: bool,
-) -> NDArray:
-    """Return `arr` after optional zero subtraction and scale division."""
+) -> tuple[NDArray, NDArray | None, NDArray | None]:
+    """Return normalized data and the resolved zero/scale plane vectors."""
     out = arr
     copied = False
     arr_stat = mask_as_nan(arr, mask) if mask is not None else arr
@@ -172,7 +172,46 @@ def _apply_zero_scale(
         )
         out = (out if copied else arr.copy()) / s
         copied = True
-    return out if copied else arr
+    return (
+        out if copied else arr,
+        z if zero is not None else None,
+        s if scale is not None else None,
+    )
+
+
+def _ccdclip_noise_vectors(
+    arr: NDArray,
+    zeros: NDArray | None,
+    scales: NDArray | None,
+    sigscale: float = 0.1,
+) -> tuple[tuple[float, ...] | None, tuple[float, ...] | None]:
+    """Return IRAF-gated CCDClip noise-model vectors for normalized data."""
+    n = arr.shape[0]
+    scale_values = (
+        np.ones(n, dtype=np.float64)
+        if scales is None
+        else (
+            np.full(n, np.asarray(scales, dtype=np.float64).item(), dtype=np.float64)
+            if np.asarray(scales).size == 1
+            else np.asarray(scales, dtype=np.float64).reshape(n, -1)[:, 0]
+        )
+    )
+    zero_values = (
+        np.zeros(n, dtype=np.float64)
+        if zeros is None
+        else (
+            np.full(n, np.asarray(zeros, dtype=np.float64).item(), dtype=np.float64)
+            if np.asarray(zeros).size == 1
+            else np.asarray(zeros, dtype=np.float64).reshape(n, -1)[:, 0]
+        )
+    )
+    if not (
+        np.any(scale_values != scale_values[0])
+        and sigscale != 0.0
+        and np.any(np.abs(scale_values - 1.0) > sigscale)
+    ):
+        return None, None
+    return tuple(scale_values), tuple(zero_values / scale_values)
 
 
 def _fused_reject_combine(
@@ -222,8 +261,8 @@ def _fused_reject_combine(
             rdnoise=rejector.rdnoise,
             gain=rejector.gain,
             snoise=rejector.snoise,
-            scale_ref=rejector.scale_ref,
-            zero_ref=rejector.zero_ref,
+            scales=rejector.scales,
+            zeros=rejector.zeros,
             validate=validate,
         )
     if isinstance(rejector, MinMaxClip):
@@ -345,6 +384,12 @@ class Combiner:
         self.last_reject: RejectionResult | None = None
         self.last_sample_flags: NDArray[np.uint8] | None = None
         self.reject_history: list[RejectionResult] = []
+        # `inputdata = scale_factor * (normalized + noise_zero)` for the
+        # current working stack. This lets a chained
+        # `zero_scale(...).reject(CcdClip(...))` evaluate noise in the
+        # pre-normalization per-image DN units.
+        self._ccdclip_scales: tuple[float, ...] | None = None
+        self._ccdclip_zeros: tuple[float, ...] | None = None
 
     # ---- chainable transforms ----------------------------------------------------
 
@@ -438,9 +483,6 @@ class Combiner:
         combiner : Combiner
             This object, after updating its working stack.
         """
-        if zero is None and scale is None:
-            return self
-
         arr_stat = (
             mask_as_nan(self.arr, self.mask) if self.mask is not None else self.arr
         )
@@ -477,6 +519,42 @@ class Combiner:
             self.arr = self.arr - z
         if s is not None:
             self.arr = self.arr / s
+
+        # Compose the new normalization with any preceding zero/scale step.
+        # If `inputdata = a * (old_normalized + b)` and
+        # `new_normalized = (old_normalized - z) / s`, then
+        # `inputdata = (a*s) * (new_normalized + (b+z)/s)`.
+        n = self.arr.shape[0]
+        scale_values = (
+            np.ones(n, dtype=np.float64)
+            if s is None
+            else (
+                np.full(n, np.asarray(s, dtype=np.float64).item(), dtype=np.float64)
+                if np.asarray(s).size == 1
+                else np.asarray(s, dtype=np.float64).reshape(n, -1)[:, 0]
+            )
+        )
+        zero_values = (
+            np.zeros(n, dtype=np.float64)
+            if z is None
+            else (
+                np.full(n, np.asarray(z, dtype=np.float64).item(), dtype=np.float64)
+                if np.asarray(z).size == 1
+                else np.asarray(z, dtype=np.float64).reshape(n, -1)[:, 0]
+            )
+        )
+        previous_scales = (
+            np.ones(n, dtype=np.float64)
+            if self._ccdclip_scales is None
+            else np.asarray(self._ccdclip_scales, dtype=np.float64)
+        )
+        previous_zeros = (
+            np.zeros(n, dtype=np.float64)
+            if self._ccdclip_zeros is None
+            else np.asarray(self._ccdclip_zeros, dtype=np.float64)
+        )
+        self._ccdclip_scales = tuple(previous_scales * scale_values)
+        self._ccdclip_zeros = tuple((previous_zeros + zero_values) / scale_values)
         return self
 
     def reject(
@@ -530,6 +608,21 @@ class Combiner:
             if effective_grow is not None and hasattr(rejector, "grow")
             else rejector
         )
+        if (
+            isinstance(applied_rejector, CcdClip)
+            and applied_rejector.scales is None
+            and applied_rejector.zeros is None
+        ):
+            scales, zeros = _ccdclip_noise_vectors(
+                self.arr,
+                None
+                if self._ccdclip_zeros is None
+                else np.asarray(self._ccdclip_zeros) * np.asarray(self._ccdclip_scales),
+                None
+                if self._ccdclip_scales is None
+                else np.asarray(self._ccdclip_scales),
+            )
+            applied_rejector = replace(applied_rejector, scales=scales, zeros=zeros)
         mask_before = None if self.mask is None else self.mask.copy()
         mask_rej, std, low, upp, nit, output_flags = applied_rejector.apply(
             self.arr, mask=self.mask, validate=self._validate
@@ -566,8 +659,8 @@ class Combiner:
                     rdnoise=applied_rejector.rdnoise,
                     gain=applied_rejector.gain,
                     snoise=applied_rejector.snoise,
-                    scale_ref=applied_rejector.scale_ref,
-                    zero_ref=applied_rejector.zero_ref,
+                    scales=applied_rejector.scales,
+                    zeros=applied_rejector.zeros,
                     validate=self._validate,
                 )
             elif isinstance(applied_rejector, LinearClip):
@@ -786,27 +879,33 @@ class Combiner:
             if mask_thresh is not None:
                 mask = mask_thresh if mask is None else (mask | mask_thresh)
 
-        arr = (
-            self.arr
-            if zero is None and scale is None
-            else _apply_zero_scale(
-                self.arr,
-                zero,
-                scale,
-                mask=mask,
-                zero_to_0th=zero_to_0th,
-                scale_to_0th=scale_to_0th,
-                zero_sigclip_kwargs=zero_sigclip_kwargs,
-                scale_sigclip_kwargs=scale_sigclip_kwargs,
-                validate=self._validate,
-            )
+        arr, z_vec, s_vec = _apply_zero_scale(
+            self.arr,
+            zero,
+            scale,
+            mask=mask,
+            zero_to_0th=zero_to_0th,
+            scale_to_0th=scale_to_0th,
+            zero_sigclip_kwargs=zero_sigclip_kwargs,
+            scale_sigclip_kwargs=scale_sigclip_kwargs,
+            validate=self._validate,
         )
 
-        if len(rejectors) == 1 and weight is None:
+        applied_rejectors = list(rejectors)
+        for index, rejector in enumerate(applied_rejectors):
+            if (
+                isinstance(rejector, CcdClip)
+                and rejector.scales is None
+                and rejector.zeros is None
+            ):
+                scales, zeros = _ccdclip_noise_vectors(arr, z_vec, s_vec)
+                applied_rejectors[index] = replace(rejector, scales=scales, zeros=zeros)
+
+        if len(applied_rejectors) == 1 and weight is None:
             try:
                 fused = _fused_reject_combine(
                     arr,
-                    rejectors[0],
+                    applied_rejectors[0],
                     combine=method,
                     mask=mask,
                     validate=self._validate,
@@ -816,7 +915,7 @@ class Combiner:
             if fused is not None:
                 return fused.reshape(self._trailing_shape)
 
-        for rejector in rejectors:
+        for rejector in applied_rejectors:
             if not isinstance(rejector, Rejector):
                 raise TypeError(
                     "rejectors must contain Rejector instances; "
@@ -910,6 +1009,8 @@ class Combiner:
         new.last_reject = self.last_reject  # tuple of arrays; safe to share refs
         new.last_sample_flags = self.last_sample_flags
         new.reject_history = list(self.reject_history)
+        new._ccdclip_scales = self._ccdclip_scales
+        new._ccdclip_zeros = self._ccdclip_zeros
         return new
 
     @property

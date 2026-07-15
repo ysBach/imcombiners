@@ -114,8 +114,8 @@ class CcdClip(Rejector):
     rdnoise: float = 0.0
     gain: float = 1.0
     snoise: float = 0.0
-    scale_ref: float = 1.0
-    zero_ref: float = 0.0
+    scales: tuple[float, ...] | None = None
+    zeros: tuple[float, ...] | None = None
     grow: float | None = None
 
     def _sigma_pair(self) -> tuple[float, float]:
@@ -137,7 +137,6 @@ class CcdClip(Rejector):
         """Apply CCD noise-model clipping to `arr`."""
         from .kernels import ccdclip
 
-        # Operate on gain-corrected values before applying the CCD noise model.
         gain = (
             validate_positive_scalar("gain", self.gain)
             if validate
@@ -157,8 +156,8 @@ class CcdClip(Rejector):
             rdnoise=self.rdnoise,
             gain=gain,
             snoise=self.snoise,
-            scale_ref=self.scale_ref,
-            zero_ref=self.zero_ref,
+            scales=self.scales,
+            zeros=self.zeros,
             grow=self.grow,
             validate=validate,
         )
