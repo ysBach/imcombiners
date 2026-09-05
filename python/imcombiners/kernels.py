@@ -19,8 +19,9 @@ return the 6-tuple ``(mask_rej, std, low, upp, nit, output_flags)``.
 `mask_rej` has shape ``(N, *spatial)``. `low`, `upp`, `nit`, `output_flags`, and
 sigma/CCD `std` arrays have shape ``(*spatial,)``; `std` is `None` for
 rejection algorithms without a spread diagnostic.
-``mask_rej.sum(axis=0)`` is the number rejected by that rejection kernel. The
-number actually used for a later combine is the count of finite values after
+``mask_rej.sum(axis=0)`` counts marked samples, which can include input masks
+and non-finite values as well as new rejections; see each kernel's Notes.
+The number actually used for a later combine is the count of finite values after
 input masks and rejection masks are applied.
 When `grow` is used by a rejection kernel, `mask_rej` is the final grown
 rejection mask. The `low`, `upp`, `nit`, and `std` diagnostics still describe

@@ -570,9 +570,10 @@ class Combiner:
         (``SigClip``, ``CcdClip``, ``LinearClip``, ``MinMaxClip``, ``PClip``).
         If `grow` is not `None`, the rejection mask is grown spatially within
         each input plane before it is merged into the running mask.
-        After a rejection step, ``self.mask_rej.sum(axis=0)`` is the number
-        rejected by that step at each output element, including any grown
-        samples. The number actually used by later combine calls is
+        ``self.mask_rej.sum(axis=0)`` counts marked samples, which can include
+        prior masks and non-finite inputs as well as new rejections and growth.
+        With full diagnostics, `SampleFlags.ALGORITHM` identifies new algorithm
+        rejections. The number actually used by later combine calls is
         ``np.sum(np.isfinite(self.arr) & ~self.mask, axis=0)`` after all input
         and rejection masks have been merged.
 
@@ -962,8 +963,8 @@ class Combiner:
         Returns
         -------
         variance : ndarray, shape (*spatial)
-            Per-pixel variance. Use ``np.sqrt(var)`` if an error or
-            standard-deviation map is needed.
+            Variance across retained samples. ``np.sqrt(var)`` gives their
+            standard deviation, not the uncertainty of the combined image.
         mean : ndarray, shape (*spatial)
             Returned only when `return_mean=True`.
         """

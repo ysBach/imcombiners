@@ -285,12 +285,15 @@ def ndcombine(
         Number or fraction of low and high values rejected by `"minmax"`.
         Values greater than or equal to 1 are frame counts; values in `[0, 1)`
         are fractions of the original stack size.
-    rdnoise, gain, snoise : float, optional
-        CCD noise-model parameters used by `"ccdclip"`. `snoise` is the
-        fractional sensitivity-noise coefficient: it models multiplicative
-        sensitivity uncertainty, such as flat-field noise, through the
-        ``(snoise * signal)^2`` variance term. `gain` must be finite and
-        positive when validation is enabled.
+    rdnoise : float, optional
+        CCD read noise in electrons, used by `"ccdclip"`.
+    gain : float, optional
+        CCD gain in electrons per DN (ADU), used by `"ccdclip"`. Must be
+        finite and positive when validation is enabled.
+    snoise : float, optional
+        Fractional sensitivity-noise coefficient used by `"ccdclip"`. It
+        models multiplicative uncertainty, such as flat-field noise, through
+        the ``(snoise * signal)^2`` variance term.
     pclip : float, optional
         IRAF-style pclip rank offset. Values with ``abs(pclip) < 1`` are
         converted to an integer offset using half of the input image count.
@@ -331,8 +334,9 @@ def ndcombine(
     grow : float or None, optional
         Non-negative radius in pixels used to grow `mask_rej` spatially after
         rejection. Axis 0 is the stack axis and is never grown across. `None`
-        disables growth and skips the extra calculation. Growth applies only
-        to samples rejected by `reject`, not to input masks or threshold masks.
+        disables growth and skips the extra calculation. Growth expands all
+        entries in the returned rejection mask, including input masks,
+        threshold exclusions, and non-finite samples.
     diagnostics : {None, "simple", "full"}, optional
         Diagnostic product level. `None` returns only the combined image and
         keeps the fused output-only fast paths. `"simple"` returns the combined
@@ -359,15 +363,16 @@ def ndcombine(
         `low`, `upp`, `nit`, and `output_flags` have shape ``(*spatial,)``. `std`
         has shape ``(*spatial,)`` for sigma/CCD clipping and is `None` for
         rejection algorithms without a spread diagnostic. `low` and `upp` are
-        inclusive rejection bounds: values equal to a bound are retained.
-        ``mask_rej.sum(axis=0)`` is the number rejected by that rejection
-        step, including any samples added by `grow`. The number actually used
+        retained extrema before growth, not the clipping thresholds.
+        ``mask_rej.sum(axis=0)`` counts all marked samples, including prior
+        masks, non-finite inputs, and growth. Use `sample_flags` with full
+        diagnostics to distinguish causes. The number actually used
         for combining is the count of finite samples after input mask and
         rejection mask are applied. `output_flags` bit ``16`` marks output elements
         where growth added at least one rejected sample; `low`, `upp`, `nit`,
         and `std` still describe the underlying clipping calculation. `std`
-        is the per-pixel spread used by sigma/CCD clipping, and `None` for
-        rejection algorithms without a spread diagnostic.
+        is the clipping spread for sigma clipping and the reference noise
+        for CCD clipping, not the uncertainty of the combined image.
     combined, ..., sample_flags : tuple
         Returned when ``diagnostics="full"``. `sample_flags` has dtype `uint8`
         and shape ``(N, *spatial)``. Its bits are `1=input mask/BPM`,

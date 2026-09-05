@@ -16,6 +16,14 @@ class SampleFlags(IntFlag):
 
     These bits apply to stack-shaped `sample_flags` arrays, not to the
     per-output-element `output_flags` diagnostic map.
+
+    Notes
+    -----
+    Values are ``INPUT_MASK=1``, ``NONFINITE=2``, ``THRESHOLD=4``,
+    ``ALGORITHM=8``, ``GROW=16``, ``PREVIOUS=32``, ``RESTORED_NKEEP=64``,
+    and ``RESTORED_MAXREJ=128``. Multiple causes are combined by bitwise OR.
+    `ALGORITHM` marks new algorithm rejections; `GROW` marks added neighbors.
+    The restoration bits record tentative rejections undone by safeguards.
     """
 
     INPUT_MASK = 1
@@ -33,6 +41,13 @@ class OutputFlags(IntFlag):
 
     These bits apply to spatial-shaped `output_flags` arrays, not to the
     stack-shaped `sample_flags` diagnostic arrays.
+
+    Notes
+    -----
+    Values are ``PREMASKED=1``, ``MAXITERS=2``, ``NKEEP=4``, ``MAXREJ=8``,
+    and ``GROW=16``. Multiple conditions are combined by bitwise OR.
+    Zero means normal completion and does not imply that no samples were
+    rejected. Use `sample_flags` to inspect individual sample causes.
     """
 
     PREMASKED = 1
