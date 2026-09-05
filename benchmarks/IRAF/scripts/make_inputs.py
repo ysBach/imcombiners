@@ -104,6 +104,40 @@ def _input_list(dtype_name: str, shape: tuple[int, int]) -> tuple[list[str], lis
     return inputs, masks
 
 
+def _scaled_input_list(dtype_name: str, shape: tuple[int, int]) -> list[str]:
+    """Write a stack with known IRAF file-scale/file-zero normalization."""
+    dtype = np.dtype(dtype_name)
+    scales = np.array([1.0, 2.0, 0.5, 4.0, 0.25, 2.0, 0.5], dtype=np.float32)
+    file_scales = 1.0 / scales
+    file_zeros = np.array([0.0, 20.0, -40.0, 50.0, 400.0, -60.0, 80.0])
+    if dtype_name == "uint16":
+        # Preserve representability of the unsigned stack while retaining
+        # nonuniform file zeros and scale deviations larger than sigscale.
+        file_zeros[4] = 50.0
+
+    inputs = []
+    for index, target in enumerate(_stack_for_dtype(dtype_name, shape), start=1):
+        # IRAF applies ``(raw + file_zero) / internal_scale``.  Scaling the
+        # target by four makes every integer target compatible with the exact
+        # binary scale factors above, including the 0.25 plane.
+        target = np.asarray(target, dtype=np.float32) * 4.0
+        raw = target * scales[index - 1] - file_zeros[index - 1]
+        name = f"{dtype_name}_scaled_input_{index:02d}.fits"
+        _write_fits(INPUT_DIR / name, raw.astype(dtype))
+        inputs.append(name)
+
+    (ROOT / f"{dtype_name}_scaled_inputs.lis").write_text(
+        "".join(f"inputs/{name}\n" for name in inputs)
+    )
+    (ROOT / f"{dtype_name}_scales.txt").write_text(
+        "".join(f"{value:.8g}\n" for value in file_scales)
+    )
+    (ROOT / f"{dtype_name}_zeros.txt").write_text(
+        "".join(f"{value:.8g}\n" for value in file_zeros)
+    )
+    return inputs
+
+
 def _case(
     dtype_name: str,
     reject: str,
@@ -112,6 +146,9 @@ def _case(
     iraf: dict[str, Any],
     imc: dict[str, Any],
     variant: str,
+    *,
+    inputs: list[str] | None = None,
+    input_list: str | None = None,
 ):
     suffix = "" if variant == "baseline" else f"_{variant}"
     name = f"{dtype_name}_{reject}_{iraf_combine}{suffix}"
@@ -119,7 +156,8 @@ def _case(
         "name": name,
         "dtype": dtype_name,
         "variant": variant,
-        "inputs": _INPUTS[dtype_name],
+        "inputs": _INPUTS[dtype_name] if inputs is None else inputs,
+        "input_list": f"{dtype_name}_inputs.lis" if input_list is None else input_list,
         "input_masks": _INPUT_MASKS[dtype_name],
         "output": f"{name}.fits",
         "diagnostics": {
@@ -235,7 +273,7 @@ def _write_run_cl(cases: list[dict[str, Any]]) -> None:
         )
         lines.extend(
             [
-                f'imcombine ("@{case["dtype"]}_inputs.lis", '
+                f'imcombine ("@{case["input_list"]}", '
                 f'"outputs/{case["output"]}", {arg_text})',
                 f'imcopy ("outputs/{diag["rejmask_pl"]}", "outputs/{diag["rejmask"]}")',
                 f'imcopy ("outputs/{diag["nrejmask_pl"]}", '
@@ -270,6 +308,9 @@ def generate(root: Path = ROOT, shape: tuple[int, int] = DEFAULT_SHAPE) -> list[
     _INPUTS = {dtype_name: item[0] for dtype_name, item in inputs_and_masks.items()}
     _INPUT_MASKS = {
         dtype_name: item[1] for dtype_name, item in inputs_and_masks.items()
+    }
+    scaled_inputs = {
+        dtype_name: _scaled_input_list(dtype_name, shape) for dtype_name in DTYPES
     }
 
     cases = []
@@ -349,6 +390,93 @@ def generate(root: Path = ROOT, shape: tuple[int, int] = DEFAULT_SHAPE) -> list[
                     case["iraf"].update(variant_iraf)
                     case["imcombiners"].update(variant_imc)
                 cases.extend(new_cases)
+
+            # Pin the quadratic sensitivity-noise term against IRAF without
+            # changing the unscaled normalization path.
+            cases.append(
+                _case(
+                    dtype_name,
+                    "ccdclip",
+                    iraf_combine,
+                    imc_combine,
+                    {
+                        "lsigma": 2.0,
+                        "hsigma": 2.0,
+                        "mclip": True,
+                        "nkeep": 1,
+                        "rdnoise": 5.0,
+                        "gain": 2.0,
+                        "snoise": 0.05,
+                    },
+                    {
+                        "sigma": [2.0, 2.0],
+                        "cenfunc": "median",
+                        "maxiters": 5,
+                        "nkeep": 1,
+                        "revert_on_nkeep": True,
+                        "rdnoise": 5.0,
+                        "gain": 2.0,
+                        "snoise": 0.05,
+                    },
+                    "snoise",
+                )
+            )
+
+            scaled_iraf = {
+                "scale": f"@{dtype_name}_scales.txt",
+                "zero": f"@{dtype_name}_zeros.txt",
+            }
+            scales = [1.0, 2.0, 0.5, 4.0, 0.25, 2.0, 0.5]
+            file_zeros = [0.0, 20.0, -40.0, 50.0, 400.0, -60.0, 80.0]
+            if dtype_name == "uint16":
+                file_zeros[4] = 50.0
+            scaled_imc = {
+                "scale": scales,
+                "zero": [-value for value in file_zeros],
+                "zero_to_0th": False,
+                "scale_to_0th": False,
+            }
+            scaled_inputs_name = f"{dtype_name}_scaled_inputs.lis"
+            scaled_case_inputs = scaled_inputs[dtype_name]
+            for reject, iraf_reject, imc_reject in (
+                (
+                    "ccdclip",
+                    {
+                        "lsigma": 2.0,
+                        "hsigma": 2.0,
+                        "mclip": True,
+                        "nkeep": 1,
+                        "rdnoise": 5.0,
+                        "gain": 2.0,
+                        "snoise": 0.05,
+                    },
+                    {
+                        "sigma": [2.0, 2.0],
+                        "cenfunc": "median",
+                        "maxiters": 5,
+                        "nkeep": 1,
+                        "revert_on_nkeep": True,
+                        "rdnoise": 5.0,
+                        "gain": 2.0,
+                        "snoise": 0.05,
+                    },
+                ),
+                ("pclip", {"pclip": 0.25}, {"pclip": 0.25}),
+                ("minmax", {"nlow": 1, "nhigh": 1}, {"n_minmax": [1, 1]}),
+            ):
+                cases.append(
+                    _case(
+                        dtype_name,
+                        reject,
+                        iraf_combine,
+                        imc_combine,
+                        {**iraf_reject, **scaled_iraf},
+                        {**imc_reject, **scaled_imc},
+                        "scaled",
+                        inputs=scaled_case_inputs,
+                        input_list=scaled_inputs_name,
+                    )
+                )
 
     (ROOT / "cases.json").write_text(json.dumps({"cases": cases}, indent=2) + "\n")
     _write_run_cl(cases)

@@ -28,6 +28,7 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution
 SCRIPTS_DIR = ROOT / "scripts"
 DEFAULT_IRAF_ROOT = ROOT
 DEFAULT_ECL = ROOT / "ecl.e"
+_IRAF_TASK_SENTINEL = Path("pkg/images/immatch/src/imcombine/imcombine.par")
 
 
 def _cases(manifest: Path) -> list[dict[str, Any]]:
@@ -114,6 +115,7 @@ def _write_output_only_cl(cases: list[dict[str, Any]], path: Path) -> None:
         "",
     ]
     for case in cases:
+        input_list = case.get("input_list", f"{case['dtype']}_inputs.lis")
         lines.append(f'imdelete ("outputs/{case["output"]}", verify=no)')
         params = {
             "headers": "",
@@ -147,8 +149,7 @@ def _write_output_only_cl(cases: list[dict[str, Any]], path: Path) -> None:
         )
         lines.extend(
             [
-                f'imcombine ("@{case["dtype"]}_inputs.lis", '
-                f'"outputs/{case["output"]}", {arg_text})',
+                f'imcombine ("@{input_list}", "outputs/{case["output"]}", {arg_text})',
                 "",
             ]
         )
@@ -223,11 +224,26 @@ def _write_tiny_imcombine_baseline_cl(dtype_name: str, path: Path) -> None:
 
 
 def _default_iraf_root() -> Path:
-    return Path(os.environ.get("IMCOMBINERS_IRAF_ROOT", DEFAULT_IRAF_ROOT))
+    configured = os.environ.get("IMC_IRAF_ROOT")
+    if configured is not None:
+        return Path(configured)
+    sibling = REPO_ROOT.parent / "iraf"
+    return sibling if (sibling / _IRAF_TASK_SENTINEL).is_file() else DEFAULT_IRAF_ROOT
+
+
+def _require_iraf_task_tree(iraf_root: Path) -> None:
+    """Require the IRAF source/task tree needed by the local executable."""
+    if (iraf_root / _IRAF_TASK_SENTINEL).is_file():
+        return
+    raise SystemExit(
+        "IRAF task tree not found at "
+        f"{iraf_root}. Set IMC_IRAF_ROOT to the IRAF source root or "
+        "pass --iraf-root /path/to/iraf."
+    )
 
 
 def _default_ecl() -> Path | None:
-    value = os.environ.get("IMCOMBINERS_IRAF_ECL")
+    value = os.environ.get("IMC_IRAF_ECL")
     return Path(value) if value else None
 
 
@@ -547,7 +563,8 @@ def main() -> None:
         default=_default_iraf_root(),
         help=(
             "IRAF root used for the `iraf` environment variable. Defaults to "
-            "IMCOMBINERS_IRAF_ROOT or benchmarks/IRAF."
+            "IMC_IRAF_ROOT, then an adjacent ../iraf task tree when "
+            "present."
         ),
     )
     parser.add_argument(
@@ -555,7 +572,7 @@ def main() -> None:
         type=Path,
         default=None,
         help=(
-            "Path to IRAF ecl.e. Defaults to IMCOMBINERS_IRAF_ECL, then "
+            "Path to IRAF ecl.e. Defaults to IMC_IRAF_ECL, then "
             "benchmarks/IRAF/ecl.e, then <iraf-root>/bin.macos64/ecl.e."
         ),
     )
@@ -602,6 +619,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     args.iraf_root = args.iraf_root.expanduser().resolve()
+    _require_iraf_task_tree(args.iraf_root)
     args.ecl = _resolve_ecl(
         args.iraf_root,
         args.ecl.expanduser().resolve() if args.ecl is not None else _default_ecl(),
@@ -610,7 +628,7 @@ def main() -> None:
     if not args.ecl.exists():
         raise SystemExit(
             "IRAF ecl.e not found. Put it at benchmarks/IRAF/ecl.e, set "
-            "IMCOMBINERS_IRAF_ECL, or pass --ecl."
+            "IMC_IRAF_ECL, or pass --ecl."
         )
 
     group_rows = []
@@ -772,7 +790,7 @@ def main() -> None:
             "Notes:",
             "",
             "- For IRAF setup, `ecl.e` discovery, parity cases, and full "
-            "details, see `benchmarks/IRAF/README.md`.",
+            "details, see `docs/quarto/tutorials/07-iraf-compat.qmd`.",
             *baseline_notes,
             "- Batched CL rows: all cases run in one IRAF CL process; "
             "the script contains `--repeats` copies of the case list "

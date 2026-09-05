@@ -31,6 +31,7 @@ where growth added at least one rejected sample.
 from __future__ import annotations
 
 import numpy as np
+import numpy.typing as npt
 import reducers as rd
 
 from . import _core, _doc
@@ -666,6 +667,21 @@ def sigclip_combine_1d(
     )
 
 
+def _ccd_vectors(
+    scales: npt.ArrayLike | None, zeros: npt.ArrayLike | None
+) -> tuple[list[float] | None, list[float] | None]:
+    """Convert optional CCDClip plane vectors for the compiled boundary."""
+    scale_values = (
+        None
+        if scales is None
+        else np.asarray(scales, dtype=np.float64).ravel().tolist()
+    )
+    zero_values = (
+        None if zeros is None else np.asarray(zeros, dtype=np.float64).ravel().tolist()
+    )
+    return scale_values, zero_values
+
+
 def ccdclip(
     arr: np.ndarray,
     *,
@@ -681,8 +697,8 @@ def ccdclip(
     rdnoise: float = 0.0,
     gain: float = 1.0,
     snoise: float = 0.0,
-    scale_ref: float = 1.0,
-    zero_ref: float = 0.0,
+    scales: npt.ArrayLike | None = None,
+    zeros: npt.ArrayLike | None = None,
     grow: float | None = None,
     validate: bool = True,
 ) -> RejectionResult:
@@ -694,6 +710,7 @@ def ccdclip(
         if mask is not None and mask.shape != arr.shape and mask.shape == orig_shape:
             mask = mask.reshape(arr.shape)
         mask = validate_mask(mask, arr.shape)
+    scales, zeros = _ccd_vectors(scales, zeros)
     sigma_lower, sigma_upper = _sigma_pair(sigma)
     _clip_cen = cenfunc if clip_cen is None else clip_cen
     mask_rej, std, low, upp, nit, output_flags = _core.ccdclip(
@@ -710,8 +727,8 @@ def ccdclip(
         revert_on_nkeep=bool(revert_on_nkeep),
         rdnoise_ref=float(rdnoise),
         snoise_ref=float(snoise),
-        scale_ref=float(scale_ref),
-        zero_ref=float(zero_ref),
+        scales=scales,
+        zeros=zeros,
         gain=float(gain),
         validate=bool(validate),
     )
@@ -745,12 +762,13 @@ def ccdclip_1d(
     rdnoise: float = 0.0,
     gain: float = 1.0,
     snoise: float = 0.0,
-    scale_ref: float = 1.0,
-    zero_ref: float = 0.0,
+    scales: npt.ArrayLike | None = None,
+    zeros: npt.ArrayLike | None = None,
     validate: bool = True,
 ) -> tuple[np.ndarray, object, object, object, object, object]:
     """CCD noise-model clipping for a 1-D value vector."""
     values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    scales, zeros = _ccd_vectors(scales, zeros)
     sigma_lower, sigma_upper = _sigma_pair(sigma)
     _clip_cen = cenfunc if clip_cen is None else clip_cen
     return _rejection_1d_result(
@@ -768,8 +786,8 @@ def ccdclip_1d(
             revert_on_nkeep=bool(revert_on_nkeep),
             rdnoise_ref=float(rdnoise),
             snoise_ref=float(snoise),
-            scale_ref=float(scale_ref),
-            zero_ref=float(zero_ref),
+            scales=scales,
+            zeros=zeros,
             gain=float(gain),
             validate=False,
         )
@@ -791,8 +809,8 @@ def ccdclip_mask(
     rdnoise: float = 0.0,
     gain: float = 1.0,
     snoise: float = 0.0,
-    scale_ref: float = 1.0,
-    zero_ref: float = 0.0,
+    scales: npt.ArrayLike | None = None,
+    zeros: npt.ArrayLike | None = None,
     grow: float | None = None,
     validate: bool = True,
 ) -> np.ndarray:
@@ -803,6 +821,7 @@ def ccdclip_mask(
         if mask is not None and mask.shape != arr.shape and mask.shape == orig_shape:
             mask = mask.reshape(arr.shape)
         mask = validate_mask(mask, arr.shape)
+    scales, zeros = _ccd_vectors(scales, zeros)
     sigma_lower, sigma_upper = _sigma_pair(sigma)
     _clip_cen = cenfunc if clip_cen is None else clip_cen
     mask_rej = _core.ccdclip_mask(
@@ -819,8 +838,8 @@ def ccdclip_mask(
         revert_on_nkeep=bool(revert_on_nkeep),
         rdnoise_ref=float(rdnoise),
         snoise_ref=float(snoise),
-        scale_ref=float(scale_ref),
-        zero_ref=float(zero_ref),
+        scales=scales,
+        zeros=zeros,
         gain=float(gain),
         validate=bool(validate),
     ).reshape(orig_shape)
@@ -842,12 +861,13 @@ def ccdclip_mask_1d(
     rdnoise: float = 0.0,
     gain: float = 1.0,
     snoise: float = 0.0,
-    scale_ref: float = 1.0,
-    zero_ref: float = 0.0,
+    scales: npt.ArrayLike | None = None,
+    zeros: npt.ArrayLike | None = None,
     validate: bool = True,
 ) -> np.ndarray:
     """Return only the CCD-clipping rejection mask for a 1-D value vector."""
     values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    scales, zeros = _ccd_vectors(scales, zeros)
     sigma_lower, sigma_upper = _sigma_pair(sigma)
     _clip_cen = cenfunc if clip_cen is None else clip_cen
     return _core.ccdclip_mask_1d(
@@ -864,8 +884,8 @@ def ccdclip_mask_1d(
         revert_on_nkeep=bool(revert_on_nkeep),
         rdnoise_ref=float(rdnoise),
         snoise_ref=float(snoise),
-        scale_ref=float(scale_ref),
-        zero_ref=float(zero_ref),
+        scales=scales,
+        zeros=zeros,
         gain=float(gain),
         validate=False,
     )
@@ -886,8 +906,8 @@ def _ccdclip_restored_flags(
     rdnoise: float = 0.0,
     gain: float = 1.0,
     snoise: float = 0.0,
-    scale_ref: float = 1.0,
-    zero_ref: float = 0.0,
+    scales: npt.ArrayLike | None = None,
+    zeros: npt.ArrayLike | None = None,
     validate: bool = True,
 ) -> np.ndarray:
     """Return per-sample restored-candidate flags for CCD clipping."""
@@ -897,6 +917,7 @@ def _ccdclip_restored_flags(
         if mask is not None and mask.shape != arr.shape and mask.shape == orig_shape:
             mask = mask.reshape(arr.shape)
         mask = validate_mask(mask, arr.shape)
+    scales, zeros = _ccd_vectors(scales, zeros)
     sigma_lower, sigma_upper = _sigma_pair(sigma)
     _clip_cen = cenfunc if clip_cen is None else clip_cen
     return _core.ccdclip_restored_flags(
@@ -913,8 +934,8 @@ def _ccdclip_restored_flags(
         revert_on_nkeep=bool(revert_on_nkeep),
         rdnoise_ref=float(rdnoise),
         snoise_ref=float(snoise),
-        scale_ref=float(scale_ref),
-        zero_ref=float(zero_ref),
+        scales=scales,
+        zeros=zeros,
         gain=float(gain),
         validate=bool(validate),
     ).reshape(orig_shape)
@@ -936,8 +957,8 @@ def ccdclip_combine(
     rdnoise: float = 0.0,
     gain: float = 1.0,
     snoise: float = 0.0,
-    scale_ref: float = 1.0,
-    zero_ref: float = 0.0,
+    scales: npt.ArrayLike | None = None,
+    zeros: npt.ArrayLike | None = None,
     validate: bool = True,
 ) -> np.ndarray:
     """Return an output-only CCD-clipped mean or median."""
@@ -951,6 +972,7 @@ def ccdclip_combine(
         if mask is not None and mask.shape != arr.shape and mask.shape == orig_shape:
             mask = mask.reshape(arr.shape)
         mask = validate_mask(mask, arr.shape)
+    scales, zeros = _ccd_vectors(scales, zeros)
     sigma_lower, sigma_upper = _sigma_pair(sigma)
     _clip_cen = cenfunc if clip_cen is None else clip_cen
     kernel = _core.ccdclip_median if cb in ("median", "med") else _core.ccdclip_mean
@@ -968,8 +990,8 @@ def ccdclip_combine(
         revert_on_nkeep=bool(revert_on_nkeep),
         rdnoise_ref=float(rdnoise),
         snoise_ref=float(snoise),
-        scale_ref=float(scale_ref),
-        zero_ref=float(zero_ref),
+        scales=scales,
+        zeros=zeros,
         gain=float(gain),
         validate=bool(validate),
     )
@@ -992,8 +1014,8 @@ def ccdclip_combine_1d(
     rdnoise: float = 0.0,
     gain: float = 1.0,
     snoise: float = 0.0,
-    scale_ref: float = 1.0,
-    zero_ref: float = 0.0,
+    scales: npt.ArrayLike | None = None,
+    zeros: npt.ArrayLike | None = None,
     validate: bool = True,
 ) -> object:
     """Return a 1-D CCD-clipped mean or median."""
@@ -1001,6 +1023,7 @@ def ccdclip_combine_1d(
     if cb not in ("mean", "average", "avg", "median", "med"):
         raise NotImplementedError("fused ccdclip currently supports mean and median")
     values, mask = _prepare_1d_rejection_inputs(values, mask, validate=validate)
+    scales, zeros = _ccd_vectors(scales, zeros)
     sigma_lower, sigma_upper = _sigma_pair(sigma)
     _clip_cen = cenfunc if clip_cen is None else clip_cen
     kernel = (
@@ -1020,8 +1043,8 @@ def ccdclip_combine_1d(
         revert_on_nkeep=bool(revert_on_nkeep),
         rdnoise_ref=float(rdnoise),
         snoise_ref=float(snoise),
-        scale_ref=float(scale_ref),
-        zero_ref=float(zero_ref),
+        scales=scales,
+        zeros=zeros,
         gain=float(gain),
         validate=False,
     )
