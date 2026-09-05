@@ -1,11 +1,10 @@
-# kernels.sigclip_combine { #imcombiners.kernels.sigclip_combine }
+# kernels.sigclip_mask_1d { #imcombiners.kernels.sigclip_mask_1d }
 
 ```python
-kernels.sigclip_combine(
-    arr,
+kernels.sigclip_mask_1d(
+    values,
     *,
     mask=None,
-    combine,
     sigma=(3.0, 3.0),
     maxiters=5,
     ddof=0,
@@ -19,21 +18,17 @@ kernels.sigclip_combine(
 )
 ```
 
-Sigma-clipping rejection (output-only variant).
+Sigma-clipping rejection (1-D mask-only variant).
 
 ## Parameters {.doc-section .doc-section-parameters}
 
-<code>[**arr**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N, *spatial))]{.parameter-annotation}</code>
+<code>[**values**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(N))]{.parameter-annotation}</code>
 
-:   Image stack. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Integer inputs are promoted to the package's floating workspace when `validate` is `True`. Inputs with more than 3 dimensions are flattened internally; output shapes match the trailing spatial dimensions of the input.
+:   One-dimensional value vector. Accepted dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`, and `float64`. Integer inputs are promoted to the package's floating workspace when `validate` is `True`.
 
 <code>[**mask**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
 
-:   Input mask; `True` means already masked. Must have the same shape as `arr` before any internal flattening.
-
-<code>[**combine**]{.parameter-name} [:]{.parameter-annotation-sep} [str]{.parameter-annotation}</code>
-
-:   Output combine method evaluated after rejection. Fused combine kernels support `"mean"`, `"average"`, `"avg"`, `"median"`, and `"med"`.
+:   Input mask; `True` means already masked. Must have shape ``(N,)``.
 
 <code>[**sigma**]{.parameter-name} [:]{.parameter-annotation-sep} [float or tuple of float]{.parameter-annotation} [ = ]{.parameter-default-sep} [(3.0, 3.0)]{.parameter-default}</code>
 
@@ -77,9 +72,9 @@ Sigma-clipping rejection (output-only variant).
 
 ## Returns {.doc-section .doc-section-returns}
 
-<code>[**combined**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
+<code>[**mask_rej**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool, shape (N,)]{.parameter-annotation}</code>
 
-:   Per-output mean or median after applying the input mask, finite-value filtering, and this rejection algorithm.
+:   `True` for excluded samples, including input masks and non-finite values.
 
 ## Notes {.doc-section .doc-section-notes}
 

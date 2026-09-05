@@ -19,23 +19,24 @@ import imcombiners as imc
 import numpy as np
 import pytest
 
-fits = pytest.importorskip("astropy.io.fits")
+RUN_IRAF_PARITY = os.environ.get("IMC_RUN_IRAF_PARITY") == "1"
+if RUN_IRAF_PARITY:
+    from astropy.io import fits
+else:
+    fits = pytest.importorskip("astropy.io.fits")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 IRAF_TEMPLATE_DIR = REPO_ROOT / "benchmarks" / "IRAF"
-IRAF_SOURCE_ROOT = Path(os.environ.get("IMCOMBINERS_IRAF_ROOT", IRAF_TEMPLATE_DIR))
-IRAF_ECL = Path(os.environ.get("IMCOMBINERS_IRAF_ECL", IRAF_TEMPLATE_DIR / "ecl.e"))
+IRAF_SOURCE_ROOT = Path(os.environ.get("IMC_IRAF_ROOT", IRAF_TEMPLATE_DIR))
+IRAF_ECL = Path(os.environ.get("IMC_IRAF_ECL", IRAF_TEMPLATE_DIR / "ecl.e"))
 REQUIRED_DTYPES = {"uint16", "int16", "float32"}
 REQUIRED_REJECTS = {"sigclip", "ccdclip", "pclip", "minmax"}
 REQUIRED_COMBINES = {"mean", "median"}
-REQUIRED_VARIANTS = {"baseline", "threshold", "input_bpm"}
-RUN_IRAF_PARITY = os.environ.get("IMCOMBINERS_RUN_IRAF_PARITY") == "1"
+REQUIRED_VARIANTS = {"baseline", "threshold", "input_bpm", "snoise", "scaled"}
 IRAF_PARITY_REASON = (
-    "set IMCOMBINERS_RUN_IRAF_PARITY=1 to generate temporary IRAF references "
-    "and compare them"
+    "set IMC_RUN_IRAF_PARITY=1 to generate temporary IRAF references and compare them"
 )
 _IRAF_TMP: tempfile.TemporaryDirectory[str] | None = None
-_IRAF_PREP_ERROR: str | None = None
 
 
 def _prepare_iraf_workspace() -> Path:
@@ -46,8 +47,7 @@ def _prepare_iraf_workspace() -> Path:
         ecl = legacy_ecl if legacy_ecl.exists() else ecl
     if not ecl.exists():
         raise FileNotFoundError(
-            "IRAF ecl.e not found. Put it at benchmarks/IRAF/ecl.e or set "
-            "IMCOMBINERS_IRAF_ECL."
+            "IRAF ecl.e not found. Put it at benchmarks/IRAF/ecl.e or set IMC_IRAF_ECL."
         )
 
     _IRAF_TMP = tempfile.TemporaryDirectory(prefix="imc-iraf-parity-")
@@ -67,23 +67,36 @@ def _prepare_iraf_workspace() -> Path:
             "arch": ".macos64",
         }
     )
-    subprocess.run(
+    result = subprocess.run(
         [str(ecl), "-f", str(workspace / "scripts" / "run_imcombine.cl")],
         cwd=workspace,
         env=env,
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        check=False,
+        capture_output=True,
+        text=True,
     )
+    cases = json.loads((workspace / "cases.json").read_text())["cases"]
+    expected_outputs = {
+        workspace / "outputs" / name
+        for case in cases
+        for name in (
+            case["output"],
+            *(case["diagnostics"][key] for key in ("nrejmask", "sigmas", "rejmask")),
+        )
+    }
+    missing = sorted(str(path) for path in expected_outputs if not path.exists())
+    if result.returncode != 0 or missing:
+        raise RuntimeError(
+            f"IRAF reference generation failed (exit {result.returncode}). "
+            "Check IMC_IRAF_ROOT and IMC_IRAF_ECL.\n"
+            f"Missing outputs: {', '.join(missing)}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
     return workspace
 
 
 if RUN_IRAF_PARITY:
-    try:
-        IRAF_DIR = _prepare_iraf_workspace()
-    except Exception as exc:  # noqa: BLE001
-        IRAF_DIR = IRAF_TEMPLATE_DIR
-        _IRAF_PREP_ERROR = f"{type(exc).__name__}: {exc}"
+    IRAF_DIR = _prepare_iraf_workspace()
 else:
     IRAF_DIR = IRAF_TEMPLATE_DIR
 
@@ -177,8 +190,13 @@ def _pre_rejection_mask(case: dict[str, object], stack: np.ndarray) -> np.ndarra
 
 def _diagnostic_stack(case: dict[str, object], stack: np.ndarray) -> np.ndarray:
     arr = stack.astype(np.float32, copy=False)
-    if case["imcombiners"]["reject"] == "ccdclip":
-        return arr / float(case["imcombiners"]["gain"])
+    kwargs = case["imcombiners"]
+    zero = kwargs.get("zero")
+    scale = kwargs.get("scale")
+    if zero is not None:
+        arr = arr - np.asarray(zero, dtype=np.float32).reshape(-1, 1, 1)
+    if scale is not None:
+        arr = arr / np.asarray(scale, dtype=np.float32).reshape(-1, 1, 1)
     return arr
 
 
@@ -197,6 +215,34 @@ def _retained_sigma(
     sumsq = np.nansum((retained - combined.astype(np.float32, copy=False)) ** 2, axis=0)
     denom = np.where(n_kept > 1, n_kept - 1, 1)
     return np.sqrt(sumsq / denom)
+
+
+def _has_median_attribution_quirk(case: dict[str, object]) -> bool:
+    # IRAF's sorted-window rejectors skip the retained-window reorder for
+    # median combine (iccclip.x:408 and analogues); minmax (icmm.gx) compacts
+    # its ids unconditionally and attributes correctly.
+    return str(case["imcombiners"]["combine"]).lower() in ("median", "med") and str(
+        case["imcombiners"]["reject"]
+    ) in ("sigclip", "ccdclip", "pclip")
+
+
+def _iraf_median_attributed_mask(
+    mask_rej: np.ndarray, pre_mask: np.ndarray, diag_stack: np.ndarray
+) -> np.ndarray:
+    """Predict IRAF's rejection-mask attribution for median combine."""
+    good = ~pre_mask & np.isfinite(diag_stack)
+    nrej = (mask_rej & good).sum(axis=0)
+    vals = np.where(good, diag_stack, -np.inf)
+    order = np.argsort(-vals, axis=0, kind="stable")
+    ranks = np.empty(order.shape, dtype=np.int64)
+    np.put_along_axis(
+        ranks,
+        order,
+        np.arange(vals.shape[0], dtype=np.int64).reshape(-1, 1, 1),
+        axis=0,
+    )
+    predicted = (ranks < nrej[None]) & good
+    return predicted | (mask_rej & pre_mask)
 
 
 def _case_context(case: dict[str, object]) -> str:
@@ -241,10 +287,8 @@ def _assert_equal_mask(
 
 
 @pytest.mark.skipif(
-    not RUN_IRAF_PARITY or not MANIFEST.exists(),
-    reason=IRAF_PARITY_REASON
-    if not RUN_IRAF_PARITY
-    else f"temporary IRAF parity workspace could not be prepared: {_IRAF_PREP_ERROR}",
+    not RUN_IRAF_PARITY,
+    reason=IRAF_PARITY_REASON,
 )
 def test_iraf_parity_manifest_covers_required_dtypes_rejectors_and_combines():
     cases = _cases()
@@ -275,7 +319,7 @@ def test_imcombiners_exactly_matches_iraf_imcombine_outputs(case):
     ]
     missing = [str(path) for path in expected_paths if not path.exists()]
     if missing:
-        pytest.skip(
+        pytest.fail(
             "IRAF imcombine reference outputs are absent: " + ", ".join(missing)
         )
 
@@ -295,13 +339,24 @@ def test_imcombiners_exactly_matches_iraf_imcombine_outputs(case):
     )
 
     iraf_mask_rej = _load_iraf_rejection_mask(case)
-    _assert_equal_mask(
-        mask_rej,
-        iraf_mask_rej,
-        case=case,
-        label="IRAF rejection mask",
-        stack=stack,
-    )
+    pre_mask = _pre_rejection_mask(case, stack)
+    diag_stack = _diagnostic_stack(case, stack)
+    if _has_median_attribution_quirk(case):
+        _assert_equal_mask(
+            _iraf_median_attributed_mask(mask_rej, pre_mask, diag_stack),
+            iraf_mask_rej,
+            case=case,
+            label="IRAF rejection mask (median attribution)",
+            stack=stack,
+        )
+    else:
+        _assert_equal_mask(
+            mask_rej,
+            iraf_mask_rej,
+            case=case,
+            label="IRAF rejection mask",
+            stack=stack,
+        )
 
     nrej = _read_fits(IRAF_DIR / "outputs" / case["diagnostics"]["nrejmask"])
     _assert_equal_mask(
@@ -312,9 +367,11 @@ def test_imcombiners_exactly_matches_iraf_imcombine_outputs(case):
         stack=stack,
     )
 
-    diag_stack = _diagnostic_stack(case, stack)
-    iraf_total_excluded = iraf_mask_rej | _pre_rejection_mask(case, stack)
-    iraf_low, iraf_upp = _retained_bounds(diag_stack, iraf_total_excluded)
+    if _has_median_attribution_quirk(case):
+        total_excluded = mask_rej | pre_mask
+    else:
+        total_excluded = iraf_mask_rej | pre_mask
+    iraf_low, iraf_upp = _retained_bounds(diag_stack, total_excluded)
     np.testing.assert_allclose(
         low,
         iraf_low.astype(low.dtype, copy=False),
@@ -330,8 +387,15 @@ def test_imcombiners_exactly_matches_iraf_imcombine_outputs(case):
         err_msg=f"IRAF upper retained bound parity failed for {_case_context(case)}",
     )
 
+    if case.get("variant") == "scaled":
+        # IRAF's sigma image applies its own scale correction in icsigma.x;
+        # this test covers CCD rejection and retained values, not that helper.
+        return
+
     iraf_sigmas = _read_fits(IRAF_DIR / "outputs" / case["diagnostics"]["sigmas"])
-    imc_sigmas = _retained_sigma(stack, iraf_total_excluded, got)
+    # IRAF's sigma image uses the same first-n1 value-sorted window as its
+    # rejection-mask attribution, not the true retained sample identities.
+    imc_sigmas = _retained_sigma(stack, iraf_mask_rej | pre_mask, got)
     np.testing.assert_allclose(
         imc_sigmas.astype(iraf_sigmas.dtype, copy=False),
         iraf_sigmas,

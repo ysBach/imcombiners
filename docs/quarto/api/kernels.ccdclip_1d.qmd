@@ -16,8 +16,8 @@ kernels.ccdclip_1d(
     rdnoise=0.0,
     gain=1.0,
     snoise=0.0,
-    scale_ref=1.0,
-    zero_ref=0.0,
+    scales=None,
+    zeros=None,
     validate=True,
 )
 ```
@@ -58,9 +58,9 @@ CCD noise-model clipping (1-D variant).
 
 :   Center estimator used each iteration. `lmedian` accepts the alias `lmed` and uses the lower of the two middle samples for even valid counts.
 
-<code>[**clip_cen**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+<code>[**clip_cen**]{.parameter-name} [:]{.parameter-annotation-sep} [str or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
 
-:   Center used when computing the spread for iterative rejection. `None` uses the same center as `cenfunc`; `lmedian` also accepts `lmed`.
+:   Center used when computing the spread for iterative rejection. `None` uses the same center as `cenfunc`. Choices are `"median"`, `"lmedian"`, `"lmed"`, and `"mean"`.
 
 <code>[**revert_on_nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
 
@@ -70,17 +70,21 @@ CCD noise-model clipping (1-D variant).
 
 :   Read noise in electrons.
 
+<code>[**gain**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1.0]{.parameter-default}</code>
+
+:   Positive CCD gain in electrons per DN (ADU).
+
 <code>[**snoise**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
 
-:   Sky-noise coefficient. Adds a Poisson-like contribution scaled by the local count level.
+:   Fractional sensitivity-noise coefficient for multiplicative sensitivity (for example, flat-field) uncertainty. It adds (snoise * signal)^2 to the CCD variance.
 
-<code>[**scale_ref**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [1.0]{.parameter-default}</code>
+<code>[**scales**]{.parameter-name} [:]{.parameter-annotation-sep} [array - like or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
 
-:   Reference scale factor. Typically the inverse of the exposure-time normalization applied during reduction.
+:   Noise-model vectors with one value per image. Scales must be finite and positive; zeros must be finite. See Notes for units.
 
-<code>[**zero_ref**]{.parameter-name} [:]{.parameter-annotation-sep} [float]{.parameter-annotation} [ = ]{.parameter-default-sep} [0.0]{.parameter-default}</code>
+<code>[**zeros**]{.parameter-name} [:]{.parameter-annotation-sep} [array - like or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
 
-:   Reference zero-point offset. Accounts for a known DC bias that shifts the effective noise level.
+:   Noise-model vectors with one value per image. Scales must be finite and positive; zeros must be finite. See Notes for units.
 
 <code>[**validate**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
 
@@ -90,19 +94,19 @@ CCD noise-model clipping (1-D variant).
 
 <code>[**mask_rej**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool, shape (N,)]{.parameter-annotation}</code>
 
-:   `True` where a value was rejected by this kernel.
+:   `True` for excluded samples, including input masks and non-finite values. LinearClip excludes input-mask entries from this returned mask.
 
 <code>[**std**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar or None]{.parameter-annotation}</code>
 
-:   Spread used by sigma/CCD clipping. `None` for rejection algorithms without a spread diagnostic.
+:   Clipping spread for SigClip; reference noise for CCDClip (see Notes). `None` for rejection algorithms without a spread diagnostic.
 
 <code>[**low**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
 
-:   Lower retained-value bound. Bounds are inclusive: values equal to `low` are retained.
+:   Minimum retained value. LinearClip instead reports its last accepted lower interval bound. Use `mask_rej` to identify survivors.
 
 <code>[**upp**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
 
-:   Upper retained-value bound. Bounds are inclusive: values equal to `upp` are retained.
+:   Maximum retained value. LinearClip instead reports its last accepted upper interval bound. Use `mask_rej` to identify survivors.
 
 <code>[**nit**]{.parameter-name} [:]{.parameter-annotation-sep} [scalar]{.parameter-annotation}</code>
 
@@ -114,6 +118,30 @@ CCD noise-model clipping (1-D variant).
 
 ## Notes {.doc-section .doc-section-notes}
 
-The kernel evaluates CCD rejection on gain-corrected scratch values (electrons). The per-pixel noise threshold is approximately::
+Let `c` be the `cenfunc` center of the finite, unmasked values, `g`
+the gain, `r` the read noise, and `q` the fractional sensitivity noise.
+For image `i`, the CCD model is::
 
-    sqrt((1 + snoise) * abs(noise_center + zero_ref) * scale_ref + rdnoise**2)
+    S_i = max(0, s_i * (c + z_i))
+    d_i = sqrt(max((r/g)**2, v_floor) + S_i/g + (q*S_i)**2) / s_i
+
+Here ``v_floor = 1e4 / 3.402823466e38`` is IRAF's read-variance floor.
+The direct-kernel vectors satisfy ``raw_i = s_i * (x_i + z_i)``:
+`x_i` is the supplied sample, `s_i` is `scales[i]`, and `z_i` is
+`zeros[i]` in normalized units.
+They describe already normalized input; this kernel does not normalize data.
+For ``x_i = (raw_i - raw_zero_i) / s_i``, pass ``z_i = raw_zero_i / s_i``.
+An omitted scale or zero vector defaults to ones or zeros, respectively.
+
+Scan each sorted tail inward, rejecting while ``(c-x_i)/d_i > sigma_lower``
+or ``(x_i-c)/d_i > sigma_upper``, using the two `sigma` multipliers.
+Each side stops at its first retained value;
+with unequal noise, this can shield an interior sample. Recompute `c` after
+accepted passes, subject to `nkeep`, `maxrej`, and `maxiters`.
+
+`ddof` does not affect this noise model. `clip_cen` selects the center for
+the unscaled reference noise reported as `std`; a non-finite reference
+variance stops the iteration. Rejection residuals use `cenfunc`. This diagnostic
+is neither the individual `d_i` nor the combined-image uncertainty.
+When requested, `low`/`upp` report retained extrema.
+For derivations and worked examples, see the [Rejection Methods tutorial](https://ysbach.github.io/imcombiners/tutorials/05-rejection-methods.html).

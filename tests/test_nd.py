@@ -26,6 +26,44 @@ def _numpy_lmedian(arr, axis=0):
     return np.sort(arr, axis=0)[(arr.shape[0] - 1) // 2]
 
 
+def test_ndcombine_ccdclip_uses_iraf_sigscale_gate_for_noise_vectors():
+    scales = np.array([1.0, 1.0, 1.0, 1.0, 2.0])
+    zeros = np.zeros(5)
+    normalized = np.array([10.0, 10.0, 10.0, 10.0, 16.0]).reshape(5, 1, 1)
+    raw = normalized * scales.reshape(5, 1, 1)
+    kwargs = {
+        "combine": "mean",
+        "reject": "ccdclip",
+        "sigma": 2.5,
+        "maxiters": 1,
+        "rdnoise": 5.0,
+        "gain": 2.0,
+        "scale": scales,
+        "zero": zeros,
+        "zero_to_0th": False,
+        "scale_to_0th": False,
+        "diagnostics": "simple",
+    }
+
+    gated = ndcombine(raw, **kwargs)
+    expected_gated = kernels.ccdclip(
+        normalized,
+        sigma=2.5,
+        maxiters=1,
+        rdnoise=5.0,
+        gain=2.0,
+        scales=scales,
+        zeros=zeros,
+    )
+    np.testing.assert_array_equal(gated[1], expected_gated[0])
+
+    disabled = ndcombine(raw, sigscale=0.0, **kwargs)
+    expected_disabled = kernels.ccdclip(
+        normalized, sigma=2.5, maxiters=1, rdnoise=5.0, gain=2.0
+    )
+    np.testing.assert_array_equal(disabled[1], expected_disabled[0])
+
+
 # ---- validate_stack ------------------------------------------------------------
 
 

@@ -20,13 +20,22 @@ Reject the smallest and largest unmasked values at each pixel.
 
 :   Optional radius in pixels used to grow `mask_rej` spatially after rejection. Axis 0 is the stack axis and is never grown across. `None` disables growth and skips the extra calculation.
 
-## Attributes
+## Notes {.doc-section .doc-section-notes}
 
-| Name | Description |
-| --- | --- |
-| [grow](#imcombiners.MinMaxClip.grow) | The type of the None singleton. |
-| [n_max](#imcombiners.MinMaxClip.n_max) | int([x]) -> integer |
-| [n_min](#imcombiners.MinMaxClip.n_min) | int([x]) -> integer |
+Sort the `M` finite, unmasked samples at each output pixel. With `N`
+the original image count, a request `a` (`n_min` or `n_max`) resolves to::
+
+    A = int(N * a + 0.001) if 0 <= a < 1 else int(a)
+    k = int(M * A / N + 0.001)
+
+Reject `k` samples from that tail, first the low tail, then the high tail
+of the remaining values. Both counts use the initial `M`; available samples
+limit the cuts. Thus masked/non-finite inputs reduce even count-based requests
+proportionally. For example, ``N=10, M=5, n_min=2`` removes one minimum.
+This is rank selection, not a value threshold: tied values may be split.
+There is no spread estimate or iteration; `low`/`upp` are retained extrema.
+
+For derivations and worked examples, see the [Rejection Methods tutorial](https://ysbach.github.io/imcombiners/tutorials/05-rejection-methods.html).
 
 ## Methods
 
@@ -60,4 +69,21 @@ Apply MinMaxClip to an image stack.
 
 <code>[]{.parameter-name} [:]{.parameter-annotation-sep} [mask_rej, std, low, upp, nit, output_flags : tuple of ndarray]{.parameter-annotation}</code>
 
-:   Rejection mask and diagnostics from :func:`imcombiners.kernels.minmax`. `std` is the per-pixel spread used by sigma/CCD clipping and `None` for rejection algorithms without a spread diagnostic.
+:   Rejection mask and diagnostics from :func:`imcombiners.kernels.minmax`. `std` is the per-pixel clipping spread for SigClip, reference noise for CCDClip, and `None` for algorithms without a spread diagnostic.
+
+#### Notes {.doc-section .doc-section-notes}
+
+Sort the `M` finite, unmasked samples at each output pixel. With `N`
+the original image count, a request `a` (`n_min` or `n_max`) resolves to::
+
+    A = int(N * a + 0.001) if 0 <= a < 1 else int(a)
+    k = int(M * A / N + 0.001)
+
+Reject `k` samples from that tail, first the low tail, then the high tail
+of the remaining values. Both counts use the initial `M`; available samples
+limit the cuts. Thus masked/non-finite inputs reduce even count-based requests
+proportionally. For example, ``N=10, M=5, n_min=2`` removes one minimum.
+This is rank selection, not a value threshold: tied values may be split.
+There is no spread estimate or iteration; `low`/`upp` are retained extrema.
+
+For derivations and worked examples, see the [Rejection Methods tutorial](https://ysbach.github.io/imcombiners/tutorials/05-rejection-methods.html).

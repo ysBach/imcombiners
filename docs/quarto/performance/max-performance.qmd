@@ -27,9 +27,9 @@ change runtime and memory traffic, not mathematical results. Here, "vector" is a
 - **Raw contiguous slice indexing.** After validation, the Rust kernels require C-contiguous NumPy arrays. They view the stack as one flat memory slice and compute offsets directly, avoiding repeated multidimensional ndarray indexing and shape/stride bookkeeping in inner loops.
 - **Unrolled reductions with separate accumulators.** Sum, mean, and variance scans process several stack samples per loop and keep separate running sums/counts before merging them at the end. This reduces loop overhead and short dependency chains in the CPU pipeline. For axis-0 image stacks, the Rust loop advances a flat slice index by `H * W` to read `arr[:, y, x]` without repeated multidimensional indexing.
 - **Branch-light min/max scans.** NaN-aware stack min/max reductions use the same numeric min/max semantics as the desired `nanmin`/`nanmax` behavior, so the inner loop does not need a separate branch just to ask whether the current output is still `NaN`. This is not "Rust is faster by default"; it is a specific way to avoid an unnecessary branch in a very small hot loop.
-- **CCD clip without a full gain copy.** `ccdclip`, `ccdclip_mask`, and output-only `ccdclip_combine` pass `gain` into Rust and evaluate rejection on gain-corrected per-pixel scratch values instead of first materializing a full `arr / gain` stack. Output-only `ccdclip` still combines the original source values.
+- **CCD clip without a full gain copy.** `ccdclip`, `ccdclip_mask`, and `ccdclip_combine` pass `gain` into the Rust noise model and compare residuals in the supplied data units. Per-image `scales` and `zeros` describe any prior normalization; no gain-scaled copy of the full stack is needed. The fused combine uses the supplied sample values.
 - **Mask-aware finite handling.** Non-finite samples are folded into masks once, so later inner loops can avoid redundant finite checks where correctness permits.
-- **Squared-spread sigma clipping.** `sigma` is the user-supplied dimensionless multiplier, not the measured data spread. The ordinary test is `abs(x - center) > sigma * std`, where `std` is the standard deviation for `stdfunc="std"`, the scaled MAD estimate for `stdfunc="mad"`, or the CCD noise sigma for `ccdclip`. The Rust loop *squares both sides* and tests `(x - center)^2 > sigma^2 * std^2`; for `stdfunc="std"`, `std^2` is variance. That lets output-only and mask-only paths avoid computing square roots (sqrt) on every iteration; the square root is only needed when returning diagnostic `std`.
+- **Squared-spread sigma clipping.** `sigma` is the dimensionless multiplier of the measured spread. For `sigclip`, the Rust loop compares `(x - center)^2 > sigma^2 * spread^2`, using the appropriate multiplier for each tail. Mask-only and output-only paths can avoid the square root needed to return diagnostic `std`. CCD clipping instead computes each image's noise sigma and scans sorted tails using normalized residuals; its reported `std` is a separate reference diagnostic.
 - **MAD sigma without a full sort.** `sigclip(stdfunc="mad")` is primarily a robustness option, not a reason to choose MAD for speed. Its implementation still avoids a full sort: it computes `1.4826 * median(abs(x - clip_cen))` using the same selective-median scratch buffer strategy as other median-style kernels.
 - **Rank-pair final combine.** Output-only `minmax` and `pclip` mean/median paths compute the final value from the already-built retained rank pairs instead of copying a stack-axis source values and scanning a second mask.
 - **Reusable pclip residual scores.** The `pclip` implementation follows IRAF-style rank-offset clipping. During that calculation it builds a temporary vector of normalized distance scores used to decide which sorted values to keep when `nkeep` restoration is needed. That vector is reused from per-worker scratch memory instead of allocated fresh for every output pixel.
@@ -73,12 +73,21 @@ This function shows one example:
 import numpy as np
 
 def prepare_workspace(stack):
-    dtype = np.float64 if stack.dtype == np.dtype(np.int32) else np.float32
+    stack = np.asarray(stack)
+    if stack.dtype in (np.dtype("int32"), np.dtype("float64")):
+        dtype = np.float64
+    elif stack.dtype in tuple(map(np.dtype, ("uint8", "uint16", "int16", "float32"))):
+        dtype = np.float32
+    else:
+        raise TypeError(f"Unsupported input dtype: {stack.dtype}")
     return np.ascontiguousarray(stack, dtype=dtype)
 ```
 
-* `int32` → `float64`
-* All other (in many astronomical contexts, the only other is `uint16`) → `float32`
+* `int32` and `float64` → `float64`
+* `uint8`, `uint16`, `int16`, and `float32` → `float32`
+
+This prepares the dtype and layout only. Check shape and all other kernel
+arguments before using `validate=False`.
 
 
 ## 3. Public API Baseline

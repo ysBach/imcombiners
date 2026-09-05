@@ -115,7 +115,12 @@ mask_rej, std, low, upp, nit, output_flags = cmb_chain.last_reject
 print(f"Rejected {mask_rej.sum()} samples out of {mask_rej.size}")
 ```
 
-`mask_rej.sum(axis=0)` gives the number of samples rejected by the most recent rejection step at each output element. The count actually used by later `combine(...)` calls is counted from the current combiner state:
+In this example, `mask_rej.sum(axis=0)` counts newly rejected samples because
+the input is finite and initially unmasked. In general, the returned mask can
+also include input masks, non-finite samples, and exclusions from earlier
+stages. Use `diagnostics="full"` and `SampleFlags.ALGORITHM` when you need the
+new algorithm rejections separately. Count the samples used by later
+`combine(...)` calls from the current combiner state:
 
 ```{python}
 n_used = np.sum(np.isfinite(cmb_chain.arr) & ~cmb_chain.mask, axis=0)

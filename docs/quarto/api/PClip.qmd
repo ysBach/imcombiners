@@ -24,14 +24,27 @@ IRAF-style percentile clipping.
 
 :   Optional radius in pixels used to grow `mask_rej` spatially after rejection. Axis 0 is the stack axis and is never grown across. `None` disables growth and skips the extra calculation.
 
-## Attributes
+## Notes {.doc-section .doc-section-notes}
 
-| Name | Description |
-| --- | --- |
-| [frac](#imcombiners.PClip.frac) | Convert a string or number to a floating-point number, if possible. |
-| [grow](#imcombiners.PClip.grow) | The type of the None singleton. |
-| [nkeep](#imcombiners.PClip.nkeep) | int([x]) -> integer |
-| [sigma](#imcombiners.PClip.sigma) | Convert a string or number to a floating-point number, if possible. |
+Sort the finite, unmasked samples and let `m` be their median.
+`frac` selects an offset rank `r` below (negative) or above (positive) the
+median; it is not a percentage of samples to reject. For ``abs(frac) < 1``,
+scale by ``max(N // 2, 1)`` for the original image count `N` and truncate
+to an integer, with a minimum offset magnitude of one. Estimate::
+
+    d = sign(frac) * (x_sorted[r] - m)
+
+Reject sorted endpoints while ``(m-x)/d >= sigma_lower`` or
+``(x-m)/d >= sigma_upper``, using the two `sigma` multipliers.
+Unlike sigma/CCD clipping, equality is rejected.
+The center and spread are computed once. If needed, restore the least-extreme
+rejected endpoints to satisfy `nkeep`, including IRAF's residual-tie handling.
+With fewer than three usable samples, at most `nkeep` usable samples, or
+``d == 0``, no additional samples are rejected. In diagnostic calls, `std`
+is `None` and `low`/`upp` report retained extrema. The tutorial specifies the
+full rank convention.
+
+For derivations and worked examples, see the [Rejection Methods tutorial](https://ysbach.github.io/imcombiners/tutorials/05-rejection-methods.html).
 
 ## Methods
 
@@ -65,4 +78,26 @@ Apply PClip to an image stack.
 
 <code>[]{.parameter-name} [:]{.parameter-annotation-sep} [mask_rej, std, low, upp, nit, output_flags : tuple of ndarray]{.parameter-annotation}</code>
 
-:   Rejection mask and diagnostics from :func:`imcombiners.kernels.pclip`. `std` is the per-pixel spread used by sigma/CCD clipping and `None` for rejection algorithms without a spread diagnostic.
+:   Rejection mask and diagnostics from :func:`imcombiners.kernels.pclip`. `std` is the per-pixel clipping spread for SigClip, reference noise for CCDClip, and `None` for algorithms without a spread diagnostic.
+
+#### Notes {.doc-section .doc-section-notes}
+
+Sort the finite, unmasked samples and let `m` be their median.
+`frac` selects an offset rank `r` below (negative) or above (positive) the
+median; it is not a percentage of samples to reject. For ``abs(frac) < 1``,
+scale by ``max(N // 2, 1)`` for the original image count `N` and truncate
+to an integer, with a minimum offset magnitude of one. Estimate::
+
+    d = sign(frac) * (x_sorted[r] - m)
+
+Reject sorted endpoints while ``(m-x)/d >= sigma_lower`` or
+``(x-m)/d >= sigma_upper``, using the two `sigma` multipliers.
+Unlike sigma/CCD clipping, equality is rejected.
+The center and spread are computed once. If needed, restore the least-extreme
+rejected endpoints to satisfy `nkeep`, including IRAF's residual-tie handling.
+With fewer than three usable samples, at most `nkeep` usable samples, or
+``d == 0``, no additional samples are rejected. In diagnostic calls, `std`
+is `None` and `low`/`upp` report retained extrema. The tutorial specifies the
+full rank convention.
+
+For derivations and worked examples, see the [Rejection Methods tutorial](https://ysbach.github.io/imcombiners/tutorials/05-rejection-methods.html).

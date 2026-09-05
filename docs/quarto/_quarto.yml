@@ -71,14 +71,21 @@ quartodoc:
       desc: Stateful Combiner object and rejection objects.
       contents:
         - Combiner
-        - SigClip
-        - CcdClip
-        - LinearClip
-        - MinMaxClip
-        - PClip
+        - name: SigClip
+          include_attributes: false
+        - name: CcdClip
+          include_attributes: false
+        - name: LinearClip
+          include_attributes: false
+        - name: MinMaxClip
+          include_attributes: false
+        - name: PClip
+          include_attributes: false
         - Rejector
-        - SampleFlags
-        - OutputFlags
+        - name: SampleFlags
+          include_attributes: false
+        - name: OutputFlags
+          include_attributes: false
         - resolve_zero_scale
     - title: "2 Kernel API"
       desc: Advanced one-operation primitives for custom pipeline layers.
@@ -88,6 +95,7 @@ quartodoc:
         - kernels.sigclip
         - kernels.sigclip_1d
         - kernels.sigclip_mask
+        - kernels.sigclip_mask_1d
         - kernels.sigclip_combine
         - kernels.sigclip_combine_1d
         - kernels.ccdclip

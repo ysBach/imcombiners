@@ -55,9 +55,9 @@ Sigma-clipping rejection.
 
 :   Center estimator used each iteration. `lmedian` accepts the alias `lmed` and uses the lower of the two middle samples for even valid counts.
 
-<code>[**clip_cen**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'median\', \'lmedian\', \'mean\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"median\"]{.parameter-default}</code>
+<code>[**clip_cen**]{.parameter-name} [:]{.parameter-annotation-sep} [str or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
 
-:   Center used when computing the spread for iterative rejection. `None` uses the same center as `cenfunc`; `lmedian` also accepts `lmed`.
+:   Center used when computing the spread for iterative rejection. `None` uses the same center as `cenfunc`. Choices are `"median"`, `"lmedian"`, `"lmed"`, and `"mean"`.
 
 <code>[**revert_on_nkeep**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [True]{.parameter-default}</code>
 
@@ -65,7 +65,7 @@ Sigma-clipping rejection.
 
 <code>[**stdfunc**]{.parameter-name} [:]{.parameter-annotation-sep} [(\'std\', \'mad\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [\"std\"]{.parameter-default}</code>
 
-:   Spread estimator used by sigma clipping. `"std"` uses the standard deviation. `"mad"` uses ``1.4826 * median(abs(x - clip_cen))`` as a robust sigma estimate; when `ddof > 0`, this estimate is multiplied by ``sqrt(nvalid / (nvalid - ddof))`` and pixels with ``nvalid <= ddof`` return `NaN` spread diagnostics.
+:   Spread estimator used by sigma clipping. `"std"` uses the standard deviation. `"mad"` uses ``1.4826 * median(abs(x - clip_cen))`` as a robust sigma estimate and ignores `ddof`.
 
 <code>[**grow**]{.parameter-name} [:]{.parameter-annotation-sep} [float or None]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
 
@@ -79,19 +79,19 @@ Sigma-clipping rejection.
 
 <code>[**mask_rej**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of bool, shape (N, *spatial)]{.parameter-annotation}</code>
 
-:   `True` where a value was rejected by this kernel. ``mask_rej.sum(axis=0)`` is the per-output rejected count.
+:   `True` for excluded samples, including input masks and non-finite values. LinearClip excludes input-mask entries; its disabled default returns an all-false mask (see Notes). Thus ``mask_rej.sum(axis=0)`` need not count only newly rejected samples.
 
 <code>[**std**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial) or None)]{.parameter-annotation}</code>
 
-:   Per-pixel spread used by sigma/CCD clipping. `None` for rejection algorithms without a spread diagnostic.
+:   Clipping spread for SigClip; reference noise for CCDClip (see Notes). `None` for rejection algorithms without a spread diagnostic.
 
 <code>[**low**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
 
-:   Lower retained-value bound. Bounds are inclusive: values equal to `low` are retained.
+:   Minimum retained value before growth. LinearClip instead reports its last accepted lower interval bound. Use `mask_rej` to identify survivors.
 
 <code>[**upp**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
 
-:   Upper retained-value bound. Bounds are inclusive: values equal to `upp` are retained.
+:   Maximum retained value before growth. LinearClip instead reports its last accepted upper interval bound. Use `mask_rej` to identify survivors.
 
 <code>[**nit**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of uint8, shape (*spatial)]{.parameter-annotation}</code>
 
@@ -99,4 +99,25 @@ Sigma-clipping rejection.
 
 <code>[**output_flags**]{.parameter-name} [:]{.parameter-annotation-sep} [ndarray of uint8, shape (*spatial)]{.parameter-annotation}</code>
 
-:   Bit-coded status. ``0`` means normal completion; bit ``1`` means at least one pre-masked sample at this output element; bit ``16`` means `grow` added at least one rejected sample at this output element. Iterative kernels also use bit ``2`` for maxiters, bit ``4`` for `nkeep`, and bit ``8`` for `maxrej`. Bits are OR-ed. `output_flags` is a per-output diagnostic; use ``mask_rej.sum(axis=0)`` to count samples rejected by this step.
+:   Bit-coded status. ``0`` means normal completion; bit ``1`` means at least one pre-masked sample at this output element; bit ``16`` means `grow` added at least one rejected sample at this output element. Iterative kernels also use bit ``2`` for maxiters, bit ``4`` for `nkeep`, and bit ``8`` for `maxrej`. Bits are OR-ed. `output_flags` is a per-output diagnostic; use `mask_rej` to inspect individual samples.
+
+## Notes {.doc-section .doc-section-notes}
+
+For the current finite, unmasked samples, let `c` be the `cenfunc`
+center, `a` the `clip_cen` center, and `n` the sample count. Retain::
+
+    c - sigma_lower * d <= x <= c + sigma_upper * d
+
+`x` is a sample value; ``sigma=(sigma_lower, sigma_upper)`` sets the two
+multipliers, or a scalar uses the same multiplier for both tails.
+The spread is ``d = sqrt(sum((x - a)**2) / (n - ddof))`` for
+``stdfunc="std"``, or ``d = 1.4826 * median(abs(x - a))`` for
+``stdfunc="mad"``. MAD ignores `ddof`; standard deviation is undefined
+when ``n <= ddof``. `clip_cen=None` uses the same center as `cenfunc`.
+
+Equality is retained. Recompute center and spread after each accepted pass;
+stop when no new samples are rejected, the spread is undefined, a safeguard
+reverts the pass, or `maxiters` is reached. Earlier rejections remain excluded.
+When requested, `std` describes the clipping spread, not the uncertainty of
+the combined output; `low` and `upp` report the final retained extrema.
+For derivations and worked examples, see the [Rejection Methods tutorial](https://ysbach.github.io/imcombiners/tutorials/05-rejection-methods.html).

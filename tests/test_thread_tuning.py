@@ -113,7 +113,7 @@ def test_print_results_handles_no_parallel_candidates(capsys):
     assert "No parallel thread candidates were measured." in out
     assert "Recommended measured mode: serial" in out
     assert "export RAYON_NUM_THREADS=" not in out
-    assert "IMCOMBINERS_PARALLEL_THRESHOLD" not in out
+    assert "IMC_PARALLEL_THRESHOLD" not in out
 
 
 def test_best_result_prefers_lowest_median_then_lower_thread_count():
@@ -173,7 +173,7 @@ def test_print_results_includes_copyable_shell_and_python_snippets(capsys):
     assert "within the near-tie tolerance" in out
     assert "speedup_vs_serial" in out
     assert "export RAYON_NUM_THREADS=8" in out
-    assert "IMCOMBINERS_PARALLEL_THRESHOLD" not in out
+    assert "IMC_PARALLEL_THRESHOLD" not in out
     assert "rejection kernels use imc's internal rejection-parallel policy" in out
     assert "import reducers as rd" in out
     assert "rd.get_num_threads()" in out
@@ -195,7 +195,7 @@ def test_print_results_recommends_serial_when_serial_is_near_tied(capsys):
     assert "Recommended measured mode: serial" in out
     assert "speedup_vs_serial" in out
     assert "export RAYON_NUM_THREADS=" not in out
-    assert "IMCOMBINERS_PARALLEL_THRESHOLD" not in out
+    assert "IMC_PARALLEL_THRESHOLD" not in out
     assert "imc.set_rayon_num_threads(" not in out
     assert "imc.set_parallel_threshold" not in out
 

@@ -45,3 +45,19 @@ Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. S
 <code>[**combined**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
 
 :   Per-output mean or median after applying the input mask, finite-value filtering, and this rejection algorithm.
+
+## Notes {.doc-section .doc-section-notes}
+
+Sort the `M` finite, unmasked samples at each output pixel. With `N`
+the original image count, a request `a` (`n_min` or `n_max`) resolves to::
+
+    A = int(N * a + 0.001) if 0 <= a < 1 else int(a)
+    k = int(M * A / N + 0.001)
+
+Reject `k` samples from that tail, first the low tail, then the high tail
+of the remaining values. Both counts use the initial `M`; available samples
+limit the cuts. Thus masked/non-finite inputs reduce even count-based requests
+proportionally. For example, ``N=10, M=5, n_min=2`` removes one minimum.
+This is rank selection, not a value threshold: tied values may be split.
+There is no spread estimate or iteration; `low`/`upp` are retained extrema.
+For derivations and worked examples, see the [Rejection Methods tutorial](https://ysbach.github.io/imcombiners/tutorials/05-rejection-methods.html).

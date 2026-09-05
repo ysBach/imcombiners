@@ -190,6 +190,106 @@ def test_sigclip_returns_pixel_std_diagnostic():
     np.testing.assert_allclose(std[0, 0], np.std([1.0, 2.0, 3.0], ddof=0))
 
 
+@pytest.mark.parametrize(
+    ("offset", "dtype"),
+    [(0.0, "float64"), (1e12, "float64"), (1e16, "float64"), (1e6, "float32")],
+)
+@pytest.mark.parametrize("cenfunc", ["mean", "median", "lmedian"])
+def test_sigclip_mean_spread_is_stable_under_translation(
+    offset: float, dtype: str, cenfunc: str
+) -> None:
+    values = np.array([offset, offset + 2.0, offset + 4.0], dtype=dtype)
+    kwargs = dict(sigma=3.0, maxiters=1, ddof=1, cenfunc=cenfunc, clip_cen="mean")
+
+    mask, std, *_ = kernels.sigclip_1d(values, **kwargs)
+
+    np.testing.assert_array_equal(mask, [False, False, False])
+    assert std == 2.0
+    stack = values.reshape(3, 1, 1)
+    np.testing.assert_array_equal(kernels.sigclip_mask(stack, **kwargs), False)
+    for method in ("mean", "median"):
+        assert kernels.sigclip_combine_1d(values, combine=method, **kwargs) == (
+            offset + 2.0
+        )
+
+
+@pytest.mark.parametrize("ddof", [0, 1, 3])
+def test_sigclip_mean_spread_uses_only_unmasked_finite_values(ddof: int) -> None:
+    values = np.array([1e12, 1e12 + 2.0, 1e12 + 4.0, -1e12, np.nan, np.inf])
+    input_mask = np.array([False, False, False, True, False, False])
+
+    mask, std, *_ = kernels.sigclip_1d(
+        values,
+        mask=input_mask,
+        sigma=3.0,
+        maxiters=1,
+        ddof=ddof,
+        cenfunc="mean",
+        clip_cen="mean",
+    )
+
+    np.testing.assert_array_equal(mask, [False, False, False, True, True, True])
+    if ddof == 3:
+        assert np.isnan(std)
+    else:
+        assert std == np.sqrt(8.0 / (3 - ddof))
+
+
+@pytest.mark.parametrize("all_masked", [False, True])
+def test_sigclip_mean_spread_with_at_most_one_valid_sample(all_masked: bool) -> None:
+    values = np.array([1e12, -1e12, np.nan, np.inf])
+    input_mask = np.array([all_masked, True, False, False])
+    kwargs = dict(mask=input_mask, ddof=1, cenfunc="mean", clip_cen="mean", maxiters=5)
+
+    mask, std, *_ = kernels.sigclip_1d(values, **kwargs)
+
+    np.testing.assert_array_equal(mask, [all_masked, True, True, True])
+    assert np.isnan(std)
+    for method in ("mean", "median"):
+        np.testing.assert_equal(
+            kernels.sigclip_combine_1d(values, combine=method, **kwargs),
+            np.nan if all_masked else 1e12,
+        )
+
+
+def test_sigclip_stable_mean_spread_preserves_full_iteration_revert() -> None:
+    values = np.array([1e12, 1e12 + 2.0, 1e12 + 4.0])
+    kwargs = dict(
+        sigma=0.5, ddof=1, cenfunc="mean", clip_cen="mean", nkeep=3, maxiters=1
+    )
+
+    mask, std, _, _, _, code = kernels.sigclip_1d(values, **kwargs)
+
+    np.testing.assert_array_equal(mask, False)
+    assert std == 2.0
+    assert code & 4
+    assert kernels.sigclip_combine_1d(values, combine="mean", **kwargs) == 1e12 + 2.0
+
+
+@pytest.mark.parametrize("value", [1.0, 1e308, -1e308])
+def test_pclip_keeps_identical_finite_values_at_extreme_magnitudes(
+    value: float,
+) -> None:
+    values = np.full(4, value)
+    stack = values.reshape(4, 1, 1)
+
+    mask, _, low, upp, *_ = kernels.pclip_1d(values)
+
+    np.testing.assert_array_equal(mask, False)
+    assert low == upp == value
+    np.testing.assert_array_equal(kernels.pclip_mask(stack), False)
+    assert kernels.pclip_combine_1d(values, combine="median") == value
+
+
+def test_pclip_even_center_handles_opposite_finite_extremes() -> None:
+    values = np.array([-1e308, -1e308, 1e308, 1e308])
+
+    mask, *_ = kernels.pclip_1d(values)
+
+    np.testing.assert_array_equal(mask, False)
+    assert kernels.pclip_combine_1d(values, combine="median") == 0.0
+
+
 def test_sigclip_mad_stdfunc_uses_scaled_median_absolute_deviation():
     arr = np.array([8.0, 9.0, 10.0, 11.0, 12.0, 100.0], dtype=np.float32).reshape(
         6, 1, 1
@@ -357,14 +457,13 @@ def test_ccdclip_returns_noise_model_std_diagnostic():
         sigma=10.0,
         maxiters=5,
         rdnoise=3.0,
+        gain=2.0,
         snoise=0.0,
-        scale_ref=1.0,
-        zero_ref=0.0,
         cenfunc="median",
         clip_cen="median",
     )
 
-    np.testing.assert_allclose(std[0, 0], np.sqrt(10.0 + 3.0**2))
+    np.testing.assert_allclose(std[0, 0], np.sqrt((3.0 / 2.0) ** 2 + 10.0 / 2.0))
 
 
 def test_ccdclip_accepts_lower_median_center_alias():
@@ -394,42 +493,121 @@ def test_ccdclip_accepts_lower_median_center_alias():
     np.testing.assert_array_equal(lmed_mask, lmedian_mask)
 
 
-def test_ccdclip_gain_matches_explicit_gain_corrected_input():
-    arr = np.array([18.0, 20.0, 22.0, 200.0], dtype=np.float32).reshape(4, 1, 1)
-    kwargs = {
-        "sigma": 1.0,
-        "maxiters": 3,
-        "rdnoise": 3.0,
-        "snoise": 0.0,
-        "scale_ref": 1.0,
-        "zero_ref": 0.0,
-        "cenfunc": "median",
-        "clip_cen": "median",
-        "nkeep": 1,
-    }
+def test_ccdclip_noise_model_matches_iraf_formula_with_gain_and_snoise():
+    arr = np.array([9.0, 10.0, 11.0], dtype=np.float64).reshape(3, 1, 1)
 
-    got = kernels.ccdclip(arr, gain=2.0, **kwargs)
-    expected = kernels.ccdclip(arr / 2.0, **kwargs)
+    _, std, *_ = kernels.ccdclip(
+        arr,
+        sigma=100.0,
+        maxiters=1,
+        rdnoise=3.0,
+        gain=2.0,
+        snoise=0.1,
+        cenfunc="median",
+        clip_cen="median",
+    )
 
-    for got_item, expected_item in zip(got, expected, strict=True):
-        np.testing.assert_allclose(got_item, expected_item)
+    np.testing.assert_allclose(std[0, 0], np.sqrt((3.0 / 2.0) ** 2 + 10.0 / 2.0 + 1.0))
 
 
-def test_ccdclip_mask_gain_matches_explicit_gain_corrected_input():
-    arr = np.array([18.0, 20.0, 22.0, 200.0], dtype=np.float32).reshape(4, 1, 1)
-    kwargs = {
-        "sigma": 1.0,
-        "maxiters": 3,
-        "rdnoise": 3.0,
-        "cenfunc": "median",
-        "clip_cen": "median",
-        "nkeep": 1,
-    }
+def test_ccdclip_uses_maximum_zero_signal_not_absolute_signal():
+    arr = np.array([-100, -100, -100, -100, -85], dtype=np.float64).reshape(5, 1, 1)
 
-    got = kernels.ccdclip_mask(arr, gain=2.0, **kwargs)
-    expected = kernels.ccdclip_mask(arr / 2.0, **kwargs)
+    mask, std, *_ = kernels.ccdclip(
+        arr,
+        sigma=3.0,
+        maxiters=1,
+        rdnoise=5.0,
+        gain=2.0,
+        cenfunc="median",
+        clip_cen="median",
+    )
 
-    np.testing.assert_array_equal(got, expected)
+    assert mask[:, 0, 0].tolist() == [False, False, False, False, True]
+    np.testing.assert_allclose(std[0, 0], 2.5)
+
+
+def test_ccdclip_divides_scaled_noise_sigma_by_plane_scale():
+    arr = np.array([10, 10, 10, 10, 16], dtype=np.float64).reshape(5, 1, 1)
+
+    mask, std, *_ = kernels.ccdclip(
+        arr,
+        sigma=2.5,
+        maxiters=1,
+        rdnoise=5.0,
+        gain=2.0,
+        scales=[2.0] * 5,
+        zeros=[0.0] * 5,
+        cenfunc="median",
+        clip_cen="median",
+    )
+
+    assert mask[:, 0, 0].tolist() == [False, False, False, False, True]
+    np.testing.assert_allclose(std[0, 0], np.sqrt(11.25))
+
+
+def test_ccdclip_uses_each_plane_zero_in_its_noise_sigma():
+    arr = np.array([10, 10, 10, 10, 25], dtype=np.float64).reshape(5, 1, 1)
+
+    mask, *_ = kernels.ccdclip(
+        arr,
+        sigma=2.0,
+        maxiters=1,
+        rdnoise=3.0,
+        gain=1.0,
+        scales=[1.0] * 5,
+        zeros=[0.0, 0.0, 0.0, 0.0, 100.0],
+        cenfunc="median",
+        clip_cen="median",
+    )
+
+    assert not mask.any()
+
+
+def test_ccdclip_sorted_end_scan_stops_before_shielded_sample():
+    arr = np.array([0, 1, 10, 10, 10], dtype=np.float64).reshape(5, 1, 1)
+
+    mask, *_ = kernels.ccdclip(
+        arr,
+        sigma=2.0,
+        maxiters=1,
+        rdnoise=0.1,
+        gain=1.0,
+        scales=[1.0] * 5,
+        zeros=[400.0, 0.0, 0.0, 0.0, 0.0],
+        cenfunc="median",
+        clip_cen="median",
+    )
+
+    assert not mask.any()
+
+
+@pytest.mark.parametrize(
+    ("scales", "zeros", "message"),
+    [
+        ([1.0, 1.0], None, "one value per image plane"),
+        ([1.0, 0.0, 1.0], None, "finite and positive"),
+    ],
+)
+def test_ccdclip_validates_plane_vectors(scales, zeros, message):
+    arr = np.ones((3, 1, 1), dtype=np.float64)
+    with pytest.raises(ValueError, match=message):
+        kernels.ccdclip(arr, scales=scales, zeros=zeros)
+
+
+def test_ccdclip_accepts_zeros_without_explicit_scales():
+    arr = np.array([10, 10, 10, 10, 25], dtype=np.float64).reshape(5, 1, 1)
+    mask, *_ = kernels.ccdclip(
+        arr,
+        sigma=2.0,
+        maxiters=1,
+        rdnoise=3.0,
+        gain=1.0,
+        zeros=[0.0, 0.0, 0.0, 0.0, 100.0],
+        cenfunc="median",
+        clip_cen="median",
+    )
+    assert not mask.any()
 
 
 def test_grow_mask_radius_one_uses_euclidean_neighbors():
@@ -781,38 +959,6 @@ def test_ccdclip_low_upp_are_retained_extrema():
     assert upp[0, 0] == np.max(kept)
 
 
-def test_ccdclip_noise_model_honors_clip_cen():
-    arr = np.array([1.0, 1.0, 5.0, 12.0], dtype=np.float32).reshape(4, 1, 1)
-
-    mean_noise_mask, *_ = kernels.ccdclip(
-        arr,
-        sigma=1.0,
-        maxiters=5,
-        nkeep=0,
-        rdnoise=0.0,
-        snoise=0.0,
-        scale_ref=1.0,
-        zero_ref=0.0,
-        cenfunc="median",
-        clip_cen="mean",
-    )
-    median_noise_mask, *_ = kernels.ccdclip(
-        arr,
-        sigma=1.0,
-        maxiters=5,
-        nkeep=0,
-        rdnoise=0.0,
-        snoise=0.0,
-        scale_ref=1.0,
-        zero_ref=0.0,
-        cenfunc="median",
-        clip_cen="median",
-    )
-
-    assert mean_noise_mask[:, 0, 0].tolist() == [False, False, True, True]
-    assert median_noise_mask[:, 0, 0].tolist() == [True, True, True, True]
-
-
 def test_sigclip_plain_mode_keeps_cumulative_rejections():
     # clip_cen="mean" is explicit here: the assertion is sensitive to this
     # choice and would not hold for clip_cen=None (cenfunc center).
@@ -1074,8 +1220,6 @@ def test_ccdclip_high_rdnoise_rejects_less():
         maxiters=5,
         rdnoise=0.0,
         snoise=0.0,
-        scale_ref=1.0,
-        zero_ref=0.0,
         nkeep=1,
         maxrej=19,
     )
@@ -1084,8 +1228,6 @@ def test_ccdclip_high_rdnoise_rejects_less():
         maxiters=5,
         rdnoise=1e6,
         snoise=0.0,
-        scale_ref=1.0,
-        zero_ref=0.0,
         nkeep=1,
         maxrej=19,
     )

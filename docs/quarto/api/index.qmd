@@ -28,6 +28,7 @@ Advanced one-operation primitives for custom pipeline layers.
 | [kernels.sigclip](kernels.sigclip.qmd#imcombiners.kernels.sigclip) | Sigma-clipping rejection. |
 | [kernels.sigclip_1d](kernels.sigclip_1d.qmd#imcombiners.kernels.sigclip_1d) | Sigma-clipping rejection (1-D variant). |
 | [kernels.sigclip_mask](kernels.sigclip_mask.qmd#imcombiners.kernels.sigclip_mask) | Sigma-clipping rejection (mask-only variant). |
+| [kernels.sigclip_mask_1d](kernels.sigclip_mask_1d.qmd#imcombiners.kernels.sigclip_mask_1d) | Sigma-clipping rejection (1-D mask-only variant). |
 | [kernels.sigclip_combine](kernels.sigclip_combine.qmd#imcombiners.kernels.sigclip_combine) | Sigma-clipping rejection (output-only variant). |
 | [kernels.sigclip_combine_1d](kernels.sigclip_combine_1d.qmd#imcombiners.kernels.sigclip_combine_1d) | Sigma-clipping rejection (1-D output-only variant). |
 | [kernels.ccdclip](kernels.ccdclip.qmd#imcombiners.kernels.ccdclip) | CCD noise-model clipping. |
@@ -36,8 +37,8 @@ Advanced one-operation primitives for custom pipeline layers.
 | [kernels.ccdclip_mask_1d](kernels.ccdclip_mask_1d.qmd#imcombiners.kernels.ccdclip_mask_1d) | CCD noise-model clipping (1-D mask-only variant). |
 | [kernels.ccdclip_combine](kernels.ccdclip_combine.qmd#imcombiners.kernels.ccdclip_combine) | CCD noise-model clipping (output-only variant). |
 | [kernels.ccdclip_combine_1d](kernels.ccdclip_combine_1d.qmd#imcombiners.kernels.ccdclip_combine_1d) | CCD noise-model clipping (1-D output-only variant). |
-| [kernels.linearclip](kernels.linearclip.qmd#imcombiners.kernels.linearclip) | Center-relative linear clipping (`low + low_scale * center <= value <= upp + upp_scale * center`). |
-| [kernels.linearclip_1d](kernels.linearclip_1d.qmd#imcombiners.kernels.linearclip_1d) | Center-relative linear clipping (`low + low_scale * center <= value <= upp + upp_scale * center`) (1-D variant). |
+| [kernels.linearclip](kernels.linearclip.qmd#imcombiners.kernels.linearclip) | Center-relative linear clipping. |
+| [kernels.linearclip_1d](kernels.linearclip_1d.qmd#imcombiners.kernels.linearclip_1d) | Center-relative linear clipping (1-D variant). |
 | [kernels.minmax](kernels.minmax.qmd#imcombiners.kernels.minmax) | Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. Single-pass. |
 | [kernels.minmax_1d](kernels.minmax_1d.qmd#imcombiners.kernels.minmax_1d) | Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. Single-pass (1-D variant). |
 | [kernels.minmax_mask](kernels.minmax_mask.qmd#imcombiners.kernels.minmax_mask) | Reject the `n_min` smallest and `n_max` largest unmasked values at each pixel. Single-pass (mask-only variant). |

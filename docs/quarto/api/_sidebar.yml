@@ -20,6 +20,7 @@ website:
       - api/kernels.sigclip.qmd
       - api/kernels.sigclip_1d.qmd
       - api/kernels.sigclip_mask.qmd
+      - api/kernels.sigclip_mask_1d.qmd
       - api/kernels.sigclip_combine.qmd
       - api/kernels.sigclip_combine_1d.qmd
       - api/kernels.ccdclip.qmd

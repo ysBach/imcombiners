@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from imcombiners._validation import mask_as_nan
 
-RUN_PERF = os.environ.get("IMCOMBINERS_PERF_TEST") == "1"
+RUN_PERF = os.environ.get("IMC_PERF_TEST") == "1"
 
 
 def _time_ms(func, repeats: int = 7) -> float:
@@ -56,15 +56,15 @@ def _fallback(arr: np.ndarray, reject: str, combine: str) -> np.ndarray:
             validate=False,
         )
     elif reject == "ccdclip":
-        arr_gc = arr / 2.0
         mask = imc.kernels.ccdclip_mask(
-            arr_gc,
+            arr,
             sigma=(2.0, 2.0),
             maxiters=5,
             nkeep=1,
             cenfunc="median",
             revert_on_nkeep=True,
             rdnoise=5.0,
+            gain=2.0,
             validate=False,
         )
     elif reject == "minmax":
@@ -82,7 +82,7 @@ def _fused(arr: np.ndarray, reject: str, combine: str) -> np.ndarray:
     kwargs = {
         "combine": combine,
         "reject": reject,
-        "full": False,
+        "diagnostics": None,
         "validate": False,
     }
     if reject == "sigclip":
@@ -115,7 +115,7 @@ def _fused(arr: np.ndarray, reject: str, combine: str) -> np.ndarray:
 @pytest.mark.performance
 @pytest.mark.skipif(
     not RUN_PERF,
-    reason="set IMCOMBINERS_PERF_TEST=1 to run performance regression checks",
+    reason="set IMC_PERF_TEST=1 to run performance regression checks",
 )
 @pytest.mark.parametrize("reject", ["sigclip", "ccdclip", "minmax", "pclip"])
 @pytest.mark.parametrize("combine", ["mean", "median"])

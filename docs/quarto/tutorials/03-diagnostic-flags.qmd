@@ -258,7 +258,8 @@ need per-sample provenance.
 `mask_rej` is not the same as `output_flags != 0`. They have different shapes
 and meanings:
 
-- `mask_rej` is stack-shaped and marks final rejected samples.
+- `mask_rej` is stack-shaped and can include prior exclusions as well as new
+  rejections; `sample_flags` distinguishes their causes.
 - `output_flags` is spatial-shaped and marks status conditions for each output
   element.
 - A normal algorithm rejection can have `output_flags == 0`.

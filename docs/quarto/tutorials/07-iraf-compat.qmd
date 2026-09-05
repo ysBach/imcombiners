@@ -65,7 +65,7 @@ Accepted public input dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`,
 | `combine="sum"` | `combine="sum"` | `.combine("sum")` |
 | `reject="none"` | `reject=None` | omit `.reject(...)` |
 | `reject="sigclip"`, `lsigma=lo`, `hsigma=hi` | `reject="sigclip", sigma=(lo, hi)` | `.reject(SigClip(sigma=(lo, hi)))` |
-| `reject="avsigclip"` | `reject="sigclip", cenfunc="mean", clip_cen="mean"` | `.reject(SigClip(cenfunc="mean", clip_cen="mean"))` |
+| `reject="avsigclip"` | no direct equivalent | `SigClip(cenfunc="mean")` does not implement IRAF's line-based noise estimate |
 | `reject="ccdclip"`, `rdnoise=r`, `gain=g`, `snoise=s` | `reject="ccdclip", rdnoise=r, gain=g, snoise=s` | `.reject(CcdClip(rdnoise=r, gain=g, snoise=s))` |
 | `nlow=lo`, `nhigh=hi` with `reject="minmax"` | `reject="minmax", n_minmax=(lo, hi)` | `.reject(MinMaxClip(n_min=lo, n_max=hi))` |
 | `pclip=p` with `reject="pclip"` | `reject="pclip", pclip=p` | `.reject(PClip(frac=p))` |
@@ -75,37 +75,43 @@ Accepted public input dtypes are `uint8`, `uint16`, `int16`, `int32`, `float32`,
 | `grow=r` | `grow=r` | `.reject(SigClip(...), grow=r)` or `SigClip(..., grow=r)` |
 | `weight=w`, `combine="average"` | `weight=w, combine="mean"` | `.combine("mean", weight=w)` |
 | `rejmasks`, `nrejmasks`, `expmasks`, `sigmas` diagnostic products | `diagnostics="simple"` | returns `(combined, mask_rej, mask_thresh, std, low, upp, nit, output_flags)`, not IRAF-format files |
-| `blank=value` | pass `mask=(data == value)` | `Combiner(data, mask=(data == value))` |
+| `blank=value` | no `blank` keyword; fill empty output pixels in the caller | output-fill policy, not an input mask |
 | `offsets=...` | prepare an offset-padded stack first | see the offset stacking tutorial, then combine the padded stack |
 | `masktype`, `maskvalue` | prepare a boolean input mask first | pass that mask to `ndcombine(..., mask=mask)` or `Combiner(..., mask=mask)` |
-| `sigscale` | no exact equivalent | IRAF compatibility approximation, not a recommended statistical model |
+| `sigscale` | `sigscale=0.1` for CCDClip | CCDClip applies IRAF's scale-gated per-image noise vectors; scaled SigClip remains unsupported |
 | `reject="crreject"`, `project` | no direct equivalent | handle upstream/downstream before `Combiner` |
 
 Thresholds are applied before zero/scale, rejection, and combination. Bounds
 are inclusive: values survive when `lo <= value <= hi`. With `diagnostics="simple"`,
-`mask_thresh` records values rejected by thresholding separately from
-`mask_rej`, which records values rejected by the rejection algorithm.
+`mask_thresh` records threshold exclusions. `mask_rej` also includes input
+masks, threshold exclusions, and non-finite samples for the supported rejection
+methods. Use `diagnostics="full"` and `sample_flags` to distinguish causes.
 
 `grow` expands `mask_rej` spatially within each input frame after the rejection
 algorithm runs. The radius is exact Euclidean distance on the integer pixel
 grid: `grow=1` reaches the four direct neighbors in 2-D, while
 `grow=sqrt(2)` also reaches diagonal neighbors. It does not grow across the
-stack axis and it does not expand the input mask or `mask_thresh`. With
+stack axis. Because those methods include prior exclusions in `mask_rej`,
+input-mask, threshold, and non-finite entries can also seed growth; the separate
+input mask and `mask_thresh` arrays themselves are not modified. With
 `diagnostics="simple"`, `output_flags` value `16` marks output elements where growth added at least
 one rejected sample.
 
-`blank` is usually not a missing feature in Python workflows: make a boolean
-mask with `data == blank` and pass it as `mask`. Likewise, IRAF mask files and
-`masktype`/`maskvalue` conventions should be converted to a normal boolean
-input mask before calling `imcombiners`. Offsets are intentionally handled
-outside the combiner; see the offset stacking tutorial for building a padded
-stack from shifted images before combining.
+IRAF's `blank` sets the output where no input samples survive. It does not
+identify an input sentinel. If your combined result uses NaN for empty output
+pixels, replace those values in the caller. IRAF's `avsigclip` estimates a
+noise proportionality factor across each output line; mean-centered `SigClip`
+is a different algorithm. See the [IRAF imcombine documentation](https://iraf.readthedocs.io/en/latest/tasks/images/immatch/imcombine.html).
 
-`sigscale` is not implemented as a named mode because it is an imperfect
-mathematical approximation to how scale factors affect rejection thresholds.
-When a pipeline needs that behavior, express the intended noise or scale model
-directly with zero/scale normalization and, for CCD clipping, `scale_ref` and
-`zero_ref`.
+Convert IRAF mask files and `masktype`/`maskvalue` conventions to a boolean
+input mask before calling `imcombiners`. Prepare offsets upstream as shown in
+the offset stacking tutorial.
+
+For CCDClip, `ndcombine` implements IRAF's `sigscale` gate: it applies its
+resolved per-image zero/scale vectors to the CCD noise model only when scales
+differ from one by more than `sigscale` (default `0.1`); `sigscale=0` disables
+the correction. The analogous scaled SigClip correction is deliberately not
+implemented yet.
 
 IRAF option names are shown to make translation from old `imcombine` scripts
 mechanical. The `ndcombine(...)` column is the compact ndcombine() wrapper
@@ -171,20 +177,21 @@ out = imc.ndcombine(
     combine="median",          # "mean"/"average", "median", "lmedian", or "sum"
     reject="sigclip",          # or "ccdclip", "minmax", "pclip", None
     sigma=(3.0, 3.0),          # IRAF lsigma, hsigma
-    maxiters=5,                # IRAF niterate
+    maxiters=5,                # imcombiners iteration limit
     cenfunc="median",          # IRAF mclip=yes; "mean" for mclip=no; "lmedian"/"lmed" for lower median
     clip_cen=None,             # None means use cenfunc each iteration
     nkeep=1,                   # IRAF nkeep
     revert_on_nkeep=True,      # revert an iteration that would violate nkeep
-    zero_to_0th=True,          # IRAF re-bases zero offsets to the first image
-    scale_to_0th=True,         # IRAF re-bases scale factors to the first image
+    zero_to_0th=True,          # reference-frame zero convention
+    scale_to_0th=True,         # reference-frame scale convention
 )
 ```
 
 For `combine="lmedian"` with an even number of integer input images, pure
 `ndcombine(stack, combine="lmedian")` can preserve the integer dtype by taking
-the lower of the two middle samples, matching IRAF's storage-friendly lower
-median behavior. Once masking, rejection, zero/scale, or weights are involved,
+the lower of the two middle samples. IRAF's `lmedian` takes the lower sample
+only when exactly two values survive; it uses the usual median otherwise.
+Once masking, rejection, zero/scale, or weights are involved,
 `imcombiners` uses its normal floating workspace.
 
 IRAF has exact speed shortcuts in the rejection implementation, and `imcombiners`
@@ -208,8 +215,8 @@ Other speedups are Rust implementation details around the IRAF semantics:
 per-worker scratch buffers replace per-pixel heap allocation, rank buffers use
 deterministic total ordering for finite values, output masks are scattered
 through contiguous C-order slices, and `ccdclip` passes `gain` into Rust so
-rejection can use gain-corrected scratch values without materializing a full
-gain-corrected stack. Output-only `ccdclip` additionally combines the original
+rejection can evaluate its per-image CCD noise model without materializing a
+separate pre-normalization input-DN stack. Output-only `ccdclip` additionally combines the original
 source values in the same fused path. The borrowed idea is IRAF's exact work
 elimination; the memory-layout and allocation details are specific to this
 Rust/NumPy implementation.
@@ -221,13 +228,9 @@ clipping. In `imcombiners`, pass this value as `pclip=` in the compact
 ndcombine() wrapper, `frac=` in `PClip`, or `frac=` in `imck.pclip`. Tuple `frac` values from the older
 percentile-window API are rejected.
 
-IRAF's `sigscale` behavior is different. When image scales differ beyond the
-configured tolerance, IRAF modifies the rejection sigma calculation using a
-scale-dependent correction. That is an IRAF compatibility approximation, not a
-mathematically exact replacement for modeling the data in normalized units.
-`imcombiners` therefore does not expose it as a recommended mode. For CCD
-clipping, prefer expressing the intended noise model directly with `scale_ref`
-and `zero_ref`.
+IRAF's `sigscale` behavior is now implemented for CCDClip only. The scaled
+SigClip correction remains Phase B work and should not be inferred from a
+CCDClip parity result.
 
 ## 4. Performance Tips: direct kernel calls
 
@@ -257,3 +260,99 @@ out_low = imck.sigclip_combine(
 np.testing.assert_allclose(out, out_low)
 print("direct kernel calls reproduce the IRAF-style median.")
 ```
+
+## 5. Local IRAF parity workspace and benchmark
+
+The repository's `benchmarks/IRAF` workspace provides the local IRAF
+comparison and throughput benchmark. Generated FITS inputs, IRAF outputs,
+manifests, CL scripts, and a local executable are ignored by Git. The parity
+test and benchmark normally create and remove temporary workspaces.
+
+### IRAF setup
+
+Install the [IRAF community distribution](https://iraf-community.github.io/)
+and make its `ecl.e` executable available at `benchmarks/IRAF/ecl.e` (a copy
+or symlink is fine). Set `IMC_IRAF_ECL` to use another executable and
+`IMC_IRAF_ROOT` to use another IRAF task tree. The benchmark also accepts
+`--ecl` and `--iraf-root`; an executable alone is insufficient because it
+needs the IRAF task tree. Without `IMC_IRAF_ROOT`, it discovers an adjacent
+`../iraf` task tree when present.
+
+For manual inspection from the repository root:
+
+```bash
+cd benchmarks/IRAF
+env iraf="${IMC_IRAF_ROOT:-$(pwd)}/" IRAFARCH=macos64 arch=.macos64 \
+    ./ecl.e -f scripts/run_imcombine.cl
+```
+
+Do not add `niterate` to the generated local IRAF `imcombine` commands: the
+local `imcombine.par` does not define that task parameter. The general mapping
+from an IRAF-style iteration count to `imcombiners` remains `maxiters`, as
+shown in the table above.
+
+### Generated cases and parity test
+
+Generate the inspectable local input matrix with:
+
+```bash
+uv run --extra bench python benchmarks/IRAF/scripts/make_inputs.py
+```
+
+It produces seven-frame, 128×128 `uint16`, `int16`, and `float32` stacks by
+default. The unscaled cases use `outtype=real`, `offsets=none`, `scale=none`,
+`zero=none`, `weight=none`, `project=no`, and `blank=0.0`; the exact values
+for the rejectors are `sigma=(2, 2)`, median centering, `maxiters=5`,
+`nkeep=1`, and `revert_on_nkeep=True` for sigma clipping; plus
+`rdnoise=5`, `gain=2`, and `snoise=0` for CCD clipping; `pclip=0.25`; and
+`n_minmax=(1, 1)` for minmax.
+
+The matrix covers `sigclip`, `ccdclip`, `pclip`, and `minmax`, with IRAF
+`average`/`median` (`imcombiners` `mean`/`median`) and these variants:
+
+- `baseline`: no pre-rejection threshold or input mask.
+- `threshold`: `lthreshold`/`hthreshold` of 990/1200 for `uint16` and 90/220
+  for `int16` and `float32`.
+- `input_bpm`: IRAF `masktype="!BPM badvalue"`, `maskvalue=1`, mapped to a
+  Boolean `imcombiners` mask.
+- `snoise`: unscaled CCDClip with `snoise=0.05`.
+- `scaled`: explicit per-image `@file` zero and scale values for CCDClip,
+  PClip, and MinMax; CCDClip exercises IRAF's `sigscale` branch.
+
+Run the temporary-workspace parity suite with:
+
+```bash
+IMC_RUN_IRAF_PARITY=1 uv run pytest tests/test_iraf_parity.py -q
+```
+
+It generates the inputs and CL script in a temporary directory, runs `ecl.e`,
+and compares the combined image, rejection masks, rejection counts, retained
+lower/upper bounds, and (except for the scaled case) the sigma diagnostic.
+Failures identify the case, IRAF parameters, `imcombiners` kwargs, differing
+entries, and example pixels. The documented local result is 97 passing checks:
+the coverage check plus 96 generated cases.
+
+### Benchmark
+
+Run the benchmark with:
+
+```bash
+uv run --extra bench python benchmarks/IRAF/scripts/benchmark_iraf.py --repeats 3
+```
+
+It first validates output-only `imcombiners` results against IRAF, then reports
+batched `all`, `sigclip`, `ccdclip`, `pclip`, and `minmax` groups and, by
+default, one-case rows (`--no-by-case` disables the latter). Each IRAF workload
+repeats inside a single `ecl.e -f` process; its elapsed time is divided by the
+repeat count after subtracting the default dtype-specific 1×1 output-only
+`imcombine` baseline. Use `--iraf-baseline startup` or `--iraf-baseline none`
+to change that baseline.
+
+The `imcombiners` timing reads the FITS inputs with `fitsio`, stacks them with
+NumPy, runs `ndcombine(..., diagnostics=None)`, and writes the combined FITS
+output in a temporary directory. The resulting ratio is therefore a task-level
+comparison, not a standalone kernel microbenchmark. The script prints Markdown
+to standard output, including package, platform, and CPU information; use
+`--output /tmp/imc-iraf-benchmark.md` to retain a local report. Grouped rows
+are batched workloads rather than sums of the individual case rows. Published
+summaries belong on the [2-D Image Benchmarks page](../performance/image-benchmarks.qmd).

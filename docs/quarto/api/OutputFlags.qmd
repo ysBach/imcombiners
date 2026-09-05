@@ -9,12 +9,9 @@ Per-output rejection status flags.
 These bits apply to spatial-shaped `output_flags` arrays, not to the
 stack-shaped `sample_flags` diagnostic arrays.
 
-## Attributes
+## Notes {.doc-section .doc-section-notes}
 
-| Name | Description |
-| --- | --- |
-| [GROW](#imcombiners.OutputFlags.GROW) | Per-output rejection status flags. |
-| [MAXITERS](#imcombiners.OutputFlags.MAXITERS) | Per-output rejection status flags. |
-| [MAXREJ](#imcombiners.OutputFlags.MAXREJ) | Per-output rejection status flags. |
-| [NKEEP](#imcombiners.OutputFlags.NKEEP) | Per-output rejection status flags. |
-| [PREMASKED](#imcombiners.OutputFlags.PREMASKED) | Per-output rejection status flags. |
+Values are ``PREMASKED=1``, ``MAXITERS=2``, ``NKEEP=4``, ``MAXREJ=8``,
+and ``GROW=16``. Multiple conditions are combined by bitwise OR.
+Zero means normal completion and does not imply that no samples were
+rejected. Use `sample_flags` to inspect individual sample causes.

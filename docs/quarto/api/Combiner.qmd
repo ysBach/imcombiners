@@ -143,10 +143,6 @@ available through ``combine="lmedian"`` or pure
 
 :   Rejection steps to apply as part of this ``combine`` call. With ``diagnostics=None``, a single supported rejector may use a fused output-only kernel and no rejection diagnostics are stored.
 
-<code>[**full**]{.parameter-name} [:]{.parameter-annotation-sep} [bool]{.parameter-annotation} [ = ]{.parameter-default-sep} [False]{.parameter-default}</code>
-
-:   Legacy alias for ``diagnostics="simple"``.
-
 <code>[**diagnostics**]{.parameter-name} [:]{.parameter-annotation-sep} [(None, \'simple\', \'full\')]{.parameter-annotation} [ = ]{.parameter-default-sep} [None]{.parameter-default}</code>
 
 :   Diagnostic level for this ``combine`` call. `None` returns only the combined image without mutating state. `"simple"` applies thresholds/rejectors to this combiner and retains `last_reject`. `"full"` also records `sample_flags` for the most recent rejection step.
@@ -183,9 +179,10 @@ Apply a rejector, OR-merging its mask into ``self.mask``.
 (``SigClip``, ``CcdClip``, ``LinearClip``, ``MinMaxClip``, ``PClip``).
 If `grow` is not `None`, the rejection mask is grown spatially within
 each input plane before it is merged into the running mask.
-After a rejection step, ``self.mask_rej.sum(axis=0)`` is the number
-rejected by that step at each output element, including any grown
-samples. The number actually used by later combine calls is
+``self.mask_rej.sum(axis=0)`` counts marked samples, which can include
+prior masks and non-finite inputs as well as new rejections and growth.
+With full diagnostics, `SampleFlags.ALGORITHM` identifies new algorithm
+rejections. The number actually used by later combine calls is
 ``np.sum(np.isfinite(self.arr) & ~self.mask, axis=0)`` after all input
 and rejection masks have been merged.
 
@@ -271,7 +268,7 @@ rejected by previous :meth:`reject` calls. This is equivalent to::
 
 <code>[**variance**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
 
-:   Per-pixel variance. Use ``np.sqrt(var)`` if an error or standard-deviation map is needed.
+:   Variance across retained samples. ``np.sqrt(var)`` gives their standard deviation, not the uncertainty of the combined image.
 
 <code>[**mean**]{.parameter-name} [:]{.parameter-annotation-sep} [(ndarray, shape(*spatial))]{.parameter-annotation}</code>
 

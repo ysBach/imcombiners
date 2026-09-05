@@ -36,6 +36,50 @@ def test_combiner_zero_scale_then_combine():
     np.testing.assert_allclose(out, 0.0, atol=1e-6)
 
 
+def test_combiner_chained_zero_scale_derives_ccdclip_noise_vectors():
+    scales = np.array([1.0, 1.0, 1.0, 1.0, 2.0])
+    normalized = np.array([10.0, 10.0, 10.0, 10.0, 16.0]).reshape(5, 1, 1)
+    raw = normalized * scales.reshape(5, 1, 1)
+
+    combiner = Combiner(raw).zero_scale(scale=scales, scale_to_0th=False)
+    combiner.reject(CcdClip(sigma=2.5, maxiters=1, rdnoise=5.0, gain=2.0))
+    expected, *_ = imc.kernels.ccdclip(
+        normalized,
+        sigma=2.5,
+        maxiters=1,
+        rdnoise=5.0,
+        gain=2.0,
+        scales=scales,
+        zeros=np.zeros(5),
+    )
+
+    np.testing.assert_array_equal(combiner.mask_rej, expected)
+
+
+def test_combiner_chained_zero_scale_preserves_ccdclip_zero_units():
+    scales = np.array([1.0, 1.0, 1.0, 1.0, 2.0])
+    raw_zeros = np.array([0.0, 0.0, 0.0, 0.0, 200.0])
+    normalized = np.array([10.0, 10.0, 10.0, 10.0, 23.0]).reshape(5, 1, 1)
+    raw = normalized * scales.reshape(5, 1, 1) + raw_zeros.reshape(5, 1, 1)
+
+    combiner = Combiner(raw).zero_scale(
+        zero=raw_zeros, scale=scales, zero_to_0th=False, scale_to_0th=False
+    )
+    combiner.reject(CcdClip(sigma=2.5, maxiters=1, rdnoise=5.0, gain=2.0))
+    expected, *_ = imc.kernels.ccdclip(
+        normalized,
+        sigma=2.5,
+        maxiters=1,
+        rdnoise=5.0,
+        gain=2.0,
+        scales=scales,
+        zeros=raw_zeros / scales,
+    )
+
+    np.testing.assert_array_equal(combiner.mask_rej, expected)
+    assert not combiner.mask_rej[4, 0, 0]
+
+
 def test_combiner_combine_accepts_inline_zero_scale_without_mutation():
     arr = np.ones((3, 2, 2), dtype=np.float32) * 10
     arr[1] = 20

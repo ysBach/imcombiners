@@ -53,4 +53,21 @@ IRAF-style percentile clipping at each pixel (1-D output-only variant).
 
 ## Notes {.doc-section .doc-section-notes}
 
-This follows IRAF `imcombine` pclip semantics: choose a sorted rank offset from the median, use that sample's distance from the median as sigma, then apply lower and upper sigma thresholds.
+Sort the finite, unmasked samples and let `m` be their median.
+`frac` selects an offset rank `r` below (negative) or above (positive) the
+median; it is not a percentage of samples to reject. For ``abs(frac) < 1``,
+scale by ``max(N // 2, 1)`` for the original image count `N` and truncate
+to an integer, with a minimum offset magnitude of one. Estimate::
+
+    d = sign(frac) * (x_sorted[r] - m)
+
+Reject sorted endpoints while ``(m-x)/d >= sigma_lower`` or
+``(x-m)/d >= sigma_upper``, using the two `sigma` multipliers.
+Unlike sigma/CCD clipping, equality is rejected.
+The center and spread are computed once. If needed, restore the least-extreme
+rejected endpoints to satisfy `nkeep`, including IRAF's residual-tie handling.
+With fewer than three usable samples, at most `nkeep` usable samples, or
+``d == 0``, no additional samples are rejected. In diagnostic calls, `std`
+is `None` and `low`/`upp` report retained extrema. The tutorial specifies the
+full rank convention.
+For derivations and worked examples, see the [Rejection Methods tutorial](https://ysbach.github.io/imcombiners/tutorials/05-rejection-methods.html).

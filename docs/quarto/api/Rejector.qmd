@@ -38,4 +38,4 @@ Apply this rejection algorithm to an image stack.
 
 <code>[]{.parameter-name} [:]{.parameter-annotation-sep} [mask_rej, std, low, upp, nit, output_flags : tuple of ndarray]{.parameter-annotation}</code>
 
-:   Rejection mask and diagnostics from this rejection algorithm. `std` is the per-pixel spread used by sigma/CCD clipping and `None` for rejection algorithms without a spread diagnostic.
+:   Rejection mask and diagnostics from this rejection algorithm. `std` is the per-pixel clipping spread for SigClip, reference noise for CCDClip, and `None` for algorithms without a spread diagnostic.

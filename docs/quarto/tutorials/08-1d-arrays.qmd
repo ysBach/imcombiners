@@ -79,6 +79,12 @@ The available rejection families mirror the image-stack API:
 | `pclip_1d` | `pclip_mask_1d` | `pclip_combine_1d` |
 | `linearclip_1d` | - | - |
 
+`linearclip_1d()` has a different default from the stack wrapper: its default
+bounds retain only samples equal to the selected center, unless a safeguard
+reverts the pass. `linearclip()` and `LinearClip()` explicitly disable clipping
+for the same parameter tuple. Use explicit non-default bounds for matching
+behavior; see the [LinearClip algorithm](05-rejection-methods.qmd#linearclip-algorithm).
+
 ## Validation
 
 By default the functions validate shape, dtype, mask length, and contiguity. In

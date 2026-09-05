@@ -7,6 +7,10 @@ Timings are machine-specific; see
 [How To Get Maximum Performance](max-performance.qmd) for tuning guidance,
 optimized-workspace notes, and benchmark interpretation.
 
+The static tables below are historical measurements from the earlier kernel
+benchmark runs, not a fresh baseline for the September 2026 dependency update.
+Re-run the listed commands to measure the current checkout and environment.
+
 ## 1. IRAF Benchmark: compact ndcombine() wrapper
 
 ::: {.callout-tip title="TL;DR"}
@@ -24,7 +28,7 @@ compatibility cases. It validates `imc` output-only results against IRAF, then
 times FITS input reads, stacking, `ndcombine(..., diagnostics=None)`, and
 combined FITS output writes. It does not time diagnostics, spatial `grow`, or a
 pure Rust kernel microbenchmark.
-The same fused path is available from Standard Combiner as `cmb.combine(method, rejectors=..., diagnostics=None)` after `cmb = Combiner(arr)`. The compact ndcombine() wrapper is used here because this benchmark is the IRAF-style compatibility/CLI-facing path. See [How To Get Maximum Performance](max-performance.qmd#scope-of-the-fastest-paths) for what the fast path skips and why it is faster than diagnostic routes.
+The same fused path is available from Standard Combiner as `cmb.combine(method, rejectors=..., diagnostics=None)` after `cmb = Combiner(arr)`. The compact ndcombine() wrapper is used here because this benchmark is the IRAF-style compatibility/CLI-facing path. See [API Choice](max-performance.qmd#api-choice) for what the fast path skips and why it is faster than diagnostic routes.
 
 ```bash
 uv run --extra bench python benchmarks/IRAF/scripts/benchmark_iraf.py --width 512 --height 512
@@ -77,7 +81,7 @@ Benchmark done on MBP 14" [2024, macOS 26.4.1, M4Pro(8P+4E/G20c/N16c/48G)]. New 
 ::: {.callout-tip title="TL;DR"}
 `imc` (Standard Combiner, `diagnostics=None`) is usually faster than the Astropy/NumPy and ccdproc comparison paths. The strongest rows are the frequently used **median** and **sigma-clipped median** combinations, especially for **float32** images.
 
-`imc` is the safe public Standard Combiner route. `imc_chain` is the Chained Combiner route that keeps rejection diagnostics. `imc_opt` is the prepared direct path with validation disabled: simple generic mean/median rows use `reducers`, while rejection rows use fused `imcombiners.kernels` calls where available.
+`imc` is the safe public Standard Combiner route. `imc_chain` is the Chained Combiner route that keeps rejection diagnostics. `imc_opt` is the prepared direct path with validation disabled: simple mean/median rows use the stack dispatcher described below, while rejection rows use fused `imcombiners.kernels` calls where available.
 
 `imc_opt` is much faster than Chained Combiner and usually faster than Standard Combiner because it skips object construction, validation, and default workspace copies. When `imc_opt` only near-ties Standard Combiner on rejection rows, that is expected: both paths are calling the same fused Rust kernel, so only Python wrapper/preparation overhead remains.
 :::
@@ -88,7 +92,7 @@ Columns:
 |---|---|
 | **imc** | Standard Combiner on the original input dtype, ms. For supported single-rejector mean/median sigclip rows with `diagnostics=None`, this dispatches through the fused kernel. |
 | **imc_chain** | Chained Combiner path, ms. For rejection rows this retains diagnostics and pipeline state, so it intentionally does more work than fast output-only routes. For simple rows it is the same basic `cmb.combine(...)` shape without rejection diagnostics. |
-| **imc_opt** | optimized direct path on a prepared contiguous float workspace with `validate=False`, ms. For simple mean/median rows this uses the optimized imcombiners stack dispatcher. For sigclip rows this calls the fused `imck.sigclip_combine(...)` kernel and passes `mask=` directly. |
+| **imc_opt** | optimized direct path on a prepared contiguous float workspace with `validate=False`, ms. The current simple mean/median rows use the imcombiners stack dispatcher: mean delegates to reducers, while floating median retains imcombiners' Rust traversal. Sigclip rows call the fused `imck.sigclip_combine(...)` kernel with `mask=` directly. |
 | **ap_bn** | NumPy `nanmean`/`nanmedian` for simple rows; Astropy `sigma_clip` plus NumPy `nan*` reduction for sigclip rows, ms |
 | **ccdproc** | `ccdproc.Combiner`, ms |
 | **imc/opt** | imc ÷ imc_opt - values above 1.0 mean the optimized direct path is faster than Standard Combiner |

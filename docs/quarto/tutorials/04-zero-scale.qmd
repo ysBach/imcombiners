@@ -2,19 +2,45 @@
 title: "04 Zero Scale"
 ---
 
-This tutorial uses **Standard Combiner** to apply per-frame offsets and divisors before combining: `(arr - zero) / scale`. The `zero` and `scale` arguments accept three forms:
+`zero=` subtracts one offset from each input frame. `scale=` then divides each
+frame by one factor. Together they calculate
+
+$$
+\mathrm{normalized} =
+\frac{\mathrm{inputdata} - \mathrm{zero\_offset}}
+     {\mathrm{scale\_factor}}.
+$$
+
+Standard Combiner and `ndcombine` do this before rejectors passed to the same
+combine call. Chained Combiner does it when you call `zero_scale(...)`. This
+tutorial uses Standard Combiner examples. The `zero` and `scale` arguments
+accept three forms:
 
 | Form | Example | When to use |
 |------|---------|-------------|
 | Numeric array | `scale=illumination` | You have the values from a separate measurement |
-| String statistic | `scale="median"` | Auto-compute a per-frame statistic over all pixels |
+| String statistic | `scale="median"`, `"med_sc"` | Auto-compute a per-frame statistic over all pixels |
 | Callable | `scale=lambda p: np.percentile(p, 10)` | Custom estimator (e.g. robust background) |
 
-By default, per-frame `zero` and `scale` values are rebased to the zeroth frame (`zero_to_0th=True`, `scale_to_0th=True`). This follows IRAF behavior. It makes only a small subtraction or division, so real pixel values change only slightly and Poisson-noise calculations remain well behaved.
+By default, each `zero` and `scale` value is expressed **relative to the zeroth frame**
+(`zero_to_0th=True`, `scale_to_0th=True`). If the values you
+provide are $z_i$ and $s_i$, the values actually used are
 
-Advanced callers can inspect the resolved broadcast vector with
-`imc.resolve_zero_scale(...)`, but most workflows should pass `zero=` and
-`scale=` directly to Standard Combiner.
+$$
+\mathrm{zero\_offset}_i = z_i-z_0, \qquad
+\mathrm{scale\_factor}_i = s_i/s_0.
+$$
+
+The zeroth frame is therefore unchanged. Set either option to `False` when
+you want to use the values exactly as provided.
+
+This is imcombiners' normalization convention. IRAF's joint zero/scale
+calculation can differ when both are derived from statistics and scales vary;
+do not assume full normalization parity from the reference-frame options.
+
+`imc.resolve_zero_scale(...)` can show the one zero offset and scale factor
+that will be used for each frame. Usually, pass `zero=` and `scale=` directly
+to Standard Combiner instead.
 
 ```{python}
 import numpy as np
@@ -59,7 +85,7 @@ The goal is to normalize each frame to unit illumination before combining.
 
 ## 2. Numeric Values
 
-Use this when you have the per-frame levels from an independent measurement (e.g. a flux standard observed in the same exposure):
+Use this when you have the per-frame levels from an independent measurement (e.g. flat frames with different illumination levels):
 
 ```{python}
 cmb_num = imc.Combiner(stack)
@@ -71,7 +97,12 @@ out_num = cmb_num.combine(
 print(f"Numeric scale: mean={out_num.mean():.4f}  (expect ~1.0)")
 ```
 
-The examples in this section use `scale_to_0th=False` when they want absolute unit-normalized output. With the default `scale_to_0th=True`, the scale vector is divided by its first value before application, preserving the zeroth frame's intensity scale instead of forcing the combined image toward `1.0`. The same distinction applies to `zero_to_0th`: set it to `False` when `zero` is an absolute background that should be fully subtracted.
+The examples in this section use `scale_to_0th=False` to make the combined
+image have unit normalization. With the default `scale_to_0th=True`, the first
+scale value is the reference, so the output stays on the zeroth frame's scale.
+This may be of interest if you want to preserve the Poisson noise level to a reasonable degree.
+Similarly, use `zero_to_0th=False` when `zero` is an absolute sky background
+that should be subtracted in full.
 
 ## 3. String Statistics
 
@@ -160,7 +191,8 @@ print(f"After sky subtraction: mean={out_zero.mean():.1f}  (expect ~{source:.0f}
 
 ## 6. Zero + Scale
 
-Apply sky subtraction and flux normalization together in one Standard Combiner call. The order is always `(arr - zero) / scale`:
+Apply sky subtraction and flux normalization together in one Standard Combiner
+call. The order is always $(\mathrm{inputdata}-\mathrm{zero})/\mathrm{scale}$:
 
 ```{python}
 cmb_both = imc.Combiner(stack)
@@ -176,11 +208,66 @@ print(f"zero + scale + sigclip median: mean={out_both.mean():.4f}")
 
 ## 7. Practical Notes
 
-- In Standard Combiner, `zero` and `scale` are applied for that call without mutating `cmb.arr` when `diagnostics=None`.
-- `scale` must be non-zero everywhere — a zero value raises `ValueError`.
-- Use Chained Combiner (`cmb.zero_scale(...).reject(...).combine(...)`) when you want to inspect the normalized workspace before combining.
+- In Standard Combiner, `zero` and `scale` affect that call only. With
+  `diagnostics=None`, they do not change `cmb.arr`.
+- Every `scale` value must be finite and nonzero. Otherwise, the call raises
+  `ValueError`.
+- Use Chained Combiner (`cmb.zero_scale(...).reject(...).combine(...)`) to
+  inspect normalized data before combining.
 
-## 8. Prepared Workspace Check
+## 8. CCDClip and direct normalized kernels {#ccdclip-normalization}
+
+CCDClip clips normalized values, but it calculates CCD noise in input DN. When
+the `sigscale` rule enables the per-image correction, CCDClip converts the
+current normalized center back to input DN separately for each image before it
+calculates that image's sigma. It uses this conversion only for the sigma
+calculation. It does not normalize the data again.
+
+Let `zero_offset_i` and `scale_factor_i` be the public values after any
+`zero_to_0th` and `scale_to_0th` rebasing. The public normalized data are
+
+$$
+\mathrm{normalized}_i =
+\frac{\mathrm{inputdata}_i - \mathrm{zero\_offset}_i}
+     {\mathrm{scale\_factor}_i}.
+$$
+
+The direct `kernels.ccdclip` API uses `scales` and `zeros` for that sigma
+calculation. They are not the same values as public `scale=` and `zero=`:
+
+$$
+s_i = \mathrm{scale\_factor}_i, \qquad
+z_i = \frac{\mathrm{zero\_offset}_i}{\mathrm{scale\_factor}_i}, \qquad
+\mathrm{inputdata}_i = s_i(\mathrm{normalized}_i + z_i).
+$$
+
+Usually, pass public `zero=` and `scale=` to `Combiner.combine(...)` or
+`ndcombine(...)`; do not supply these direct-kernel vectors. If you call a
+CCDClip kernel on data that you already normalized, supply them explicitly:
+
+```{python}
+normalized = np.ones((3, 1, 1), dtype="float32")
+mask_ccd, *_ = imc.kernels.ccdclip(
+    normalized,
+    scales=np.array([1.0, 1.5, 0.8]),
+    zeros=np.array([0.0, 4.0, -2.0]),
+    gain=2.0,
+    rdnoise=5.0,
+)
+```
+
+IRAF uses the per-image sigma calculation only when both conditions are true:
+
+- The resolved scale factors are not all equal.
+- At least one scale factor differs from $1$ by more than `sigscale` (default
+  `0.1`).
+
+`ndcombine(..., sigscale=...)` exposes this rule. Standard Combiner uses the
+IRAF default. When either condition is false, CCDClip still clips the
+normalized data, but calculates sigma as if no per-image scale correction were
+active.
+
+## 9. Prepared Workspace Check
 
 For simple fixed normalization, a prepared workspace can reproduce the same result:
 
