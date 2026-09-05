@@ -1,0 +1,232 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_NO_SOURCES: "true"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check release versions
+        id: version
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          cargo = tomllib.loads(Path("Cargo.toml").read_text())["package"]
+          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+          version = cargo["version"]
+          if project["version"] != version:
+              raise SystemExit("Cargo and Python versions differ")
+          for filename in ("Cargo.lock", "uv.lock"):
+              packages = tomllib.loads(Path(filename).read_text())["package"]
+              locked = next(p["version"] for p in packages if p["name"] == cargo["name"])
+              if locked != version:
+                  raise SystemExit(f"{filename} version differs from {version}")
+          if os.environ["GITHUB_REF_TYPE"] == "tag":
+              tag = os.environ["GITHUB_REF_NAME"]
+              if not re.fullmatch(r"v\d+\.\d+\.\d+", tag) or tag != f"v{version}":
+                  raise SystemExit(f"Tag {tag!r} must match v{version}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={version}\n")
+          PY
+      - name: Test Rust kernels
+        run: cargo test --locked
+      - name: Verify crate packaging
+        run: cargo publish --dry-run --locked
+
+  wheels:
+    needs: verify
+    name: Wheel (${{ matrix.platform.name }})
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux-x86_64
+            runner: ubuntu-22.04
+            target: x86_64
+            manylinux: "2014"
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: "2014"
+          - name: macos-x86_64
+            runner: macos-15-intel
+            target: x86_64
+            manylinux: "off"
+          - name: macos-aarch64
+            runner: macos-15
+            target: aarch64
+            manylinux: "off"
+          - name: windows-x86_64
+            runner: windows-2022
+            target: x64
+            manylinux: "off"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - uses: astral-sh/setup-uv@v8.1.0
+      - name: Build ABI3 wheel
+        uses: PyO3/maturin-action@v1.51.0
+        with:
+          target: ${{ matrix.platform.target }}
+          manylinux: ${{ matrix.platform.manylinux }}
+          args: --release --locked --out dist
+      - name: Test installed wheel
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          uv venv --python 3.10 .release-venv
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source .release-venv/Scripts/activate
+          else
+            source .release-venv/bin/activate
+          fi
+          for wheel in dist/*.whl; do
+            uv pip install "${wheel}[test,bench]"
+          done
+          python -c 'import os, imcombiners; assert imcombiners.__version__ == os.environ["EXPECTED_VERSION"]'
+          python -m pytest tests -q
+      - uses: actions/upload-artifact@v6
+        with:
+          name: wheels-${{ matrix.platform.name }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v8.1.0
+      - name: Build source distribution
+        uses: PyO3/maturin-action@v1.51.0
+        with:
+          command: sdist
+          args: --out dist
+      - name: Verify source distribution installs
+        env:
+          EXPECTED_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          uv venv --python 3.13 .release-venv
+          source .release-venv/bin/activate
+          for sdist in dist/*.tar.gz; do
+            uv pip install "${sdist}[test,bench]"
+          done
+          python -c 'import os, imcombiners; assert imcombiners.__version__ == os.environ["EXPECTED_VERSION"]'
+          python -m pytest tests -q
+      - uses: actions/upload-artifact@v6
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  pypi:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [verify, wheels, sdist]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/imcombiners/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v7
+        with:
+          name: sdist
+          path: dist
+      - uses: astral-sh/setup-uv@v8.1.0
+      - name: Publish to PyPI
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/ dist/*
+
+  crates-io:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [verify, wheels, sdist]
+    runs-on: ubuntu-latest
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/imcombiners
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: rust-lang/crates-io-auth-action@v1.0.5
+        id: auth
+      - name: Publish to crates.io
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  github-release:
+    needs: [verify, pypi, crates-io]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v7
+        with:
+          name: sdist
+          path: dist
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          awk -v version="$VERSION" '
+            /^## \[/ {
+              if (found) exit
+              if (index($0, "## [" version "]") == 1) found = 1
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --notes-file release-notes.md

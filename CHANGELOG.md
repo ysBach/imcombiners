@@ -2,7 +2,31 @@
 
 All notable changes to `imcombiners`. This project follows [Semantic Versioning](https://semver.org).
 
-## [0.1.0] — Unreleased
+## [0.1.2] — 2026-09-06
+
+### Fixed
+* Use reducers' stable variance and overflow-safe median arithmetic in rejection.
+* Correct CCD clipping for non-default gain, sensitivity noise, and per-image
+  scale/zero vectors, including IRAF's sorted-tail behavior.
+* Ignore `ddof` for MAD clipping; repair opt-in IRAF and performance validation.
+* Synchronize API documentation and tutorials, including equations, defaults,
+  mask/growth semantics, and the limits of IRAF compatibility.
+
+### Changed
+* Update Rust dependencies to PyO3 0.29, numpy 0.29, ndarray 0.17, and reducers
+  0.3.2. Record compiled reducers provenance separately from Python metadata.
+* Publish Python wheels/source distributions and the Rust crate automatically
+  from matching `v*` tags after release checks pass.
+
+### Compatibility
+* Use `diagnostics="simple"` or `"full"` instead of the removed `full=` alias.
+* Generic reductions belong in `reducers`; use `Combiner` or `ndcombine` for
+  image-stack workflows rather than removed generic kernel aliases.
+* Direct CCD clipping uses per-image `scales` and `zeros` instead of scalar
+  `scale_ref`/`zero_ref`. Incorrect previous CCD results can change.
+* PClip uses a scalar signed rank offset; tuple percentile windows are unsupported.
+
+## [0.1.1] — 2026-06-01
 
 ### Added
 * Rust core with pyo3 bindings (extension module `imcombiners._core`).

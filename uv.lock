@@ -1260,7 +1260,7 @@ wheels = [
 
 [[package]]
 name = "imcombiners"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "astro-ndslice" },
@@ -1280,6 +1280,7 @@ bench = [
 dev = [
     { name = "ipython", version = "8.39.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "ipython", version = "9.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "matplotlib" },
     { name = "maturin" },
     { name = "pytest" },
     { name = "pytest-benchmark" },
@@ -1292,6 +1293,7 @@ docs = [
     { name = "quartodoc" },
 ]
 test = [
+    { name = "matplotlib" },
     { name = "pytest" },
     { name = "pytest-benchmark" },
 ]
@@ -1306,7 +1308,9 @@ requires-dist = [
     { name = "griffe", marker = "extra == 'docs'", specifier = "<1" },
     { name = "ipython", marker = "extra == 'dev'" },
     { name = "jupyter", marker = "extra == 'docs'" },
+    { name = "matplotlib", marker = "extra == 'dev'" },
     { name = "matplotlib", marker = "extra == 'docs'" },
+    { name = "matplotlib", marker = "extra == 'test'" },
     { name = "maturin", marker = "extra == 'dev'", specifier = ">=1.5,<2" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
@@ -3382,7 +3386,7 @@ wheels = [
 
 [[package]]
 name = "reducers"
-version = "0.3.0"
+version = "0.3.2"
 source = { editable = "../reducers" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },

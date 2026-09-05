@@ -87,10 +87,20 @@ imcombiners = "<version>"
 ## Testing and Benchmarks
 
 ```bash
-uv run pytest
+uv run --extra test pytest
 uv run --extra bench python benchmarks/benchmark_combine.py
 uv run python benchmarks/benchmark_threads.py
 ```
 
 `--quick` runs the smoke benchmark matrix. Omit it to run the full table that
 backs the published benchmark documentation.
+
+The test extra includes Matplotlib for the logo test. To use an already active
+development environment, run `uv run --active --no-sync pytest` after installing
+the test dependencies. Set `IMC_PERF_TEST=1` to enable the performance checks.
+Benchmark environment tables report the compiled Rust `reducers` version and
+source separately from the installed Python distribution. Older builds report
+`unknown`; an unavailable extension reports `unavailable`.
+
+For version tags and automated PyPI/crates.io publishing, see
+[the release procedure](RELEASING.md).

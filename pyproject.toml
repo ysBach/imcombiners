@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "imcombiners"
-version = "0.1.1"
+version = "0.1.2"
 description = "Rust-backed image stack combine + rejection kernels (IRAF imcombine parity)"
 readme = "README.md"
 license = { text = "MIT" }
@@ -27,10 +27,12 @@ Issues     = "https://github.com/ysbach/imcombiners/issues"
 test = [
     "pytest>=7",
     "pytest-benchmark>=4",
+    "matplotlib",
 ]
 dev = [
     "pytest>=7",
     "pytest-benchmark>=4",
+    "matplotlib",
     "ruff",
     "maturin>=1.5,<2",
     "ipython",
