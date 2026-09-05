@@ -18,5 +18,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     combine::register(m)?;
     reject::register(m)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add("__reducers_version__", env!("IMC_REDUCERS_VERSION"))?;
+    m.add("__reducers_source__", env!("IMC_REDUCERS_SOURCE"))?;
     Ok(())
 }

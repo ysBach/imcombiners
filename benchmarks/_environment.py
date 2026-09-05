@@ -40,6 +40,16 @@ def collect_environment(packages: Iterable[str] = DEFAULT_PACKAGES) -> dict[str,
         "Logical CPUs": "unknown" if logical_cpus is None else str(logical_cpus),
     }
     rows.update({name: package_version(name) for name in packages})
+    try:
+        from imcombiners import _core
+    except ImportError:
+        rows["reducers (Rust)"] = "unavailable"
+        rows["reducers (Rust source)"] = "unavailable"
+    else:
+        rows["reducers (Rust)"] = getattr(_core, "__reducers_version__", "unknown")
+        rows["reducers (Rust source)"] = getattr(
+            _core, "__reducers_source__", "unknown"
+        )
     return rows
 
 

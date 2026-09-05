@@ -269,3 +269,29 @@ where
     let values = axis::reduce_axis0_number_exact(data, n, outer, Kind::LMedian);
     array2_from_vec(h, w, values)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{combine_axis0, CombineKind};
+    use ndarray::Array3;
+
+    #[test]
+    fn median_preserves_finite_extremes_after_filtering_nonfinite_samples() {
+        for value in [f64::MAX, -f64::MAX] {
+            let stack =
+                Array3::from_shape_vec((4, 1, 1), vec![value, f64::NAN, value, f64::INFINITY])
+                    .unwrap();
+            let result = combine_axis0(&stack.view(), CombineKind::Median, None, 0);
+            assert_eq!(result[[0, 0]], value);
+        }
+    }
+
+    #[test]
+    fn lower_median_selects_negative_zero_independent_of_input_order() {
+        for values in [vec![0.0_f64, -0.0], vec![-0.0_f64, 0.0]] {
+            let stack = Array3::from_shape_vec((2, 1, 1), values).unwrap();
+            let result = combine_axis0(&stack.view(), CombineKind::LMedian, None, 0);
+            assert_eq!(result[[0, 0]].to_bits(), (-0.0_f64).to_bits());
+        }
+    }
+}

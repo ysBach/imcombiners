@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from imcombiners import _core
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -45,6 +46,20 @@ def test_format_environment_markdown_includes_versions_and_kernel():
     assert "| Python | 3.13.0 |" in report
     assert "| Kernel/OS | macOS-26.4.1-arm64 |" in report
     assert "| bottleneck | 1.6.0 |" in report
+
+
+def test_environment_distinguishes_compiled_and_python_reducers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The Python package may be independently upgraded after imc was built.
+    monkeypatch.setattr(_environment.metadata, "version", lambda name: "999.0.0")
+
+    environment = _environment.collect_environment(packages=("reducers",))
+
+    assert environment["reducers"] == "999.0.0"
+    assert _core.__reducers_version__ != "999.0.0"
+    assert environment["reducers (Rust)"] == _core.__reducers_version__
+    assert environment["reducers (Rust source)"] == _core.__reducers_source__
 
 
 @pytest.mark.parametrize(
