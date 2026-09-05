@@ -6,7 +6,7 @@
 
 use ndarray::{Array2, Array3, ArrayView3};
 use rayon::prelude::*;
-use reducers::reducers_1d::{lmedian_valid_in_place, median_valid_in_place};
+use reducers::reducers_1d::{lmedian_valid_in_place, median_valid_in_place, var_mean_valid};
 use std::any::TypeId;
 use std::cmp::Ordering;
 
@@ -632,29 +632,22 @@ fn ccdclip_sample_sigma(p: &SigClipParams, center: f64, i: usize) -> f64 {
 // All helpers in this section assume the caller has already folded input
 // masks and non-finite values into `mask`.
 
-fn col_nanmean_var<T: Float>(vals: &[T], mask: &[bool], ddof: usize) -> (T, f64) {
+fn col_nanmean_var<T: Float>(
+    vals: &[T],
+    mask: &[bool],
+    ddof: usize,
+    buf: &mut Vec<f64>,
+) -> (T, f64) {
     debug_assert_mask_covers_nonfinite(vals, mask);
-    let mut s = 0.0_f64;
-    let mut ss = 0.0_f64;
-    let mut n = 0usize;
+    // Rejection owns sample selection; reducers owns stable moment arithmetic.
+    // Reuse the caller's statistics scratch instead of allocating per iteration.
+    buf.clear();
     for (i, &x) in vals.iter().enumerate() {
         if !mask[i] {
-            let xf = x.to_f64();
-            s += xf;
-            ss += xf * xf;
-            n += 1;
+            buf.push(x.to_f64());
         }
     }
-    if n == 0 {
-        return (T::nan(), f64::NAN);
-    }
-    let mean = s / n as f64;
-    let var = if n <= ddof {
-        f64::NAN
-    } else {
-        let var_num = (ss - s * mean).max(0.0);
-        var_num / (n - ddof) as f64
-    };
+    let (var, mean) = var_mean_valid(buf, ddof);
     (T::from_f64(mean), var)
 }
 
@@ -1098,7 +1091,7 @@ fn clipping_center_and_spread<T: Float>(
     let mut mean_value = None;
     let needs_mean_std = !p.ccdclip && p.clip_cen == ClipCenter::Mean;
     let cen = if needs_mean_std {
-        let stats = col_nanmean_var(col, mask, p.ddof);
+        let stats = col_nanmean_var(col, mask, p.ddof, buf);
         mean_std = Some(stats);
         mean_value = Some(stats.0);
         match p.cenfunc {
@@ -1162,8 +1155,10 @@ fn clipping_center_and_spread<T: Float>(
         match p.stdfunc {
             StdFunc::Std => {
                 let var = match p.clip_cen {
-                    ClipCenter::Mean => mean_std
-                        .map_or_else(|| col_nanmean_var(col, mask, p.ddof).1, |stats| stats.1),
+                    ClipCenter::Mean => mean_std.map_or_else(
+                        || col_nanmean_var(col, mask, p.ddof, buf).1,
+                        |stats| stats.1,
+                    ),
                     ClipCenter::Median | ClipCenter::LowerMedian => {
                         col_nanvariance_about(col, mask, std_center, p.ddof)
                     }
@@ -2134,7 +2129,9 @@ fn apply_pclip_pairs<T: Float>(
     let n2_1based = 1 + n_total / 2;
     let even = n_total % 2 == 0;
     let med = if even {
-        (pairs[n2_1based - 2].0 + pairs[n2_1based - 1].0) / 2.0
+        // Preserve the sorted image IDs; reducers handles the finite midpoint
+        // without overflowing when the two central values have the same sign.
+        median_valid_in_place(&mut [pairs[n2_1based - 2].0, pairs[n2_1based - 1].0])
     } else {
         pairs[n2_1based - 1].0
     };
