@@ -103,4 +103,4 @@ source separately from the installed Python distribution. Older builds report
 `unknown`; an unavailable extension reports `unavailable`.
 
 For version tags and automated PyPI/crates.io publishing, see
-[the release procedure](RELEASING.md).
+[the release procedure](https://github.com/ysBach/imcombiners/blob/main/RELEASING.md).
